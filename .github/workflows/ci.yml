@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Syntax checks and tests
+        run: npm run check
+      - name: Demo server starts and serves the app
+        run: |
+          OCB_DEMO=1 OCB_PASSWORD=ci OCB_PORT=7878 node server/index.js &
+          for i in $(seq 1 20); do curl -fsS localhost:7878/api/health && break; sleep 0.5; done
+          curl -fsS localhost:7878/ | grep -q '<title>opencode·pixel</title>'
+          curl -fsS -c jar -H 'content-type: application/json' -d '{"username":"me","password":"ci"}' localhost:7878/api/login
+          curl -fsS -b jar localhost:7878/api/balances | node -e 'const d=JSON.parse(require("fs").readFileSync(0));if(!d.models.length)process.exit(1);console.log(`${d.models.length} models, ${d.providers.length} providers`)'
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:7878/api/balances)" = 401

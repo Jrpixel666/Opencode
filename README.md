@@ -124,6 +124,13 @@ All in `.env` (see [`.env.example`](.env.example)):
 
 Balances and limits you type in are saved in `data/budgets.json`.
 
+## Releases
+
+Download the latest `.zip` from the repo's **Releases** page, or clone the repo. Every push to
+`main` runs CI, and a GitHub release is published automatically when `main` has a version in
+`package.json` that hasn't been released yet. To ship a new version, bump `version`, add a
+section to [`CHANGELOG.md`](CHANGELOG.md), and merge.
+
 ## Development
 
 No dependencies, no build step. `npm run check` runs syntax checks and the tests.

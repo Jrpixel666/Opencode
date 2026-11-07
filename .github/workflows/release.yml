@@ -1,0 +1,63 @@
+name: Release
+
+# Publishes a GitHub release for the version in package.json whenever main gets a version
+# that hasn't been released yet. To ship a new version: bump "version" in package.json,
+# add a section for it to CHANGELOG.md, and merge to main.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Read version
+        id: v
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if already released
+        id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.v.outputs.version }}" >/dev/null 2>&1; then
+            echo "v${{ steps.v.outputs.version }} is already released"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check
+        if: steps.exists.outputs.skip != 'true'
+        run: npm run check
+
+      - name: Package
+        if: steps.exists.outputs.skip != 'true'
+        run: |
+          V=${{ steps.v.outputs.version }}
+          mkdir -p dist
+          git archive --format=zip --prefix="opencode-pixel-$V/" -o "dist/opencode-pixel-$V.zip" HEAD
+          git archive --format=tar.gz --prefix="opencode-pixel-$V/" -o "dist/opencode-pixel-$V.tar.gz" HEAD
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          # Release notes: this version's section of CHANGELOG.md
+          awk -v v="$V" '$0 ~ "^## \\[?"v"\\]?" {on=1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Release $V" > notes.md
+
+      - name: Publish release
+        if: steps.exists.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=${{ steps.v.outputs.version }}
+          gh release create "v$V" dist/* --target "$GITHUB_SHA" --title "opencode·pixel v$V" --notes-file notes.md
