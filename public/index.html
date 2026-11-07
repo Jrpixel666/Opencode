@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#16161e" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="description" content="opencode on your Pixel: chat with your coding agent, manage provider logins and see your balance per model." />
+    <title>opencode·pixel</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,600;0,800;1,400&display=swap" />
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <!-- ── login (a TTY-style greeter) ─────────────────────────────── -->
+    <div id="login" class="greeter" hidden>
+      <form id="login-form" class="win greeter-box" autocomplete="on">
+        <span class="label">login</span>
+        <pre class="greeter-art" aria-hidden="true">
+ ┌─┐┌─┐┌─┐┌┐┌┌─┐┌─┐┌┬┐┌─┐
+ │ │├─┘├┤ │││├  │ │ ││├┤
+ └─┘┴  └─┘┘└┘└─┘└─┘─┴┘└─┘
+        <span class="dim">· pixel ·</span></pre>
+        <p class="dim greeter-sub" id="login-host"></p>
+        <label class="field"><span>login:</span><input name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required /></label>
+        <label class="field"><span>password:</span><input name="password" type="password" autocomplete="current-password" required /></label>
+        <p class="error" id="login-error" role="alert"></p>
+        <button class="btn primary block" type="submit">❯ log in</button>
+      </form>
+    </div>
+
+    <!-- ── the desktop: waybar + workspaces ────────────────────────── -->
+    <div id="desktop" hidden>
+      <header class="waybar">
+        <div class="wb-left">
+          <button id="super" class="wb-btn super" aria-label="Open launcher" title="Launcher (Ctrl+K)"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM15 15h3v3h-3z" /></svg></button>
+          <nav class="ws-nav" id="ws-nav" aria-label="Workspaces"></nav>
+        </div>
+        <button class="wb-center wb-btn" id="clock" aria-label="Time"></button>
+        <div class="wb-right">
+          <button class="wb-btn" id="wb-spend" title="Spent today"></button>
+          <span class="wb-item" id="wb-net" title="Connection"><i class="dot"></i></span>
+          <span class="wb-item" id="wb-batt" hidden></span>
+        </div>
+      </header>
+
+      <main id="viewport">
+        <div id="track">
+          <!-- 1 · chat -->
+          <section class="workspace" data-ws="chat">
+            <div class="win chat-win">
+              <span class="label"><span id="chat-busy" class="spin" hidden></span><span id="chat-label">chat</span></span>
+              <div class="chat-head">
+                <button class="chip ghost" id="chat-title" title="Sessions"></button>
+                <button class="chip" id="model-chip" title="Model"></button>
+                <button class="chip" id="agent-chip" title="Agent (build/plan)"></button>
+              </div>
+              <div class="chat-log" id="chat-log" aria-live="polite"></div>
+              <button class="jump" id="jump" hidden aria-label="Scroll to latest">↓</button>
+              <div id="retry" class="retry" hidden></div>
+              <div id="perms"></div>
+              <form class="composer" id="composer">
+                <div id="attachments" class="attachments"></div>
+                <div class="composer-row">
+                  <span class="ps1" aria-hidden="true">❯</span>
+                  <textarea id="prompt" rows="1" placeholder="ask opencode…" enterkeyhint="send" autocomplete="off"></textarea>
+                  <button type="button" class="icon-btn" id="attach-btn" aria-label="Attach image"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="2" d="M21 12.5l-8.5 8.5a5 5 0 01-7-7L14 5.5a3.5 3.5 0 015 5L10.5 19a2 2 0 01-3-3L15 8.5" /></svg></button>
+                  <button type="button" class="icon-btn" id="mic-btn" aria-label="Dictate" hidden><svg viewBox="0 0 24 24" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="2" d="M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3zM5 11a7 7 0 0014 0M12 18v3" /></svg></button>
+                  <button type="submit" class="icon-btn send" id="send-btn" aria-label="Send"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 20l18-8L3 4v6l12 2-12 2z" /></svg></button>
+                  <button type="button" class="icon-btn stop" id="stop-btn" aria-label="Stop" hidden><svg viewBox="0 0 24 24" width="18" height="18"><rect x="5" y="5" width="14" height="14" fill="currentColor" /></svg></button>
+                </div>
+                <input type="file" id="file-input" accept="image/*,application/pdf" multiple hidden />
+              </form>
+            </div>
+          </section>
+
+          <!-- 2 · sessions -->
+          <section class="workspace" data-ws="sessions">
+            <div class="win scroll">
+              <span class="label">sessions</span>
+              <div class="scroller">
+                <div class="toolbar">
+                  <input type="search" id="session-filter" placeholder="filter…" aria-label="Filter sessions" />
+                  <button class="btn primary" id="new-session">+ new</button>
+                </div>
+                <ul class="list" id="session-list"></ul>
+              </div>
+            </div>
+          </section>
+
+          <!-- 3 · balance -->
+          <section class="workspace" data-ws="balance">
+            <div class="win scroll">
+              <span class="label">balance</span>
+              <div class="scroller" id="balance"></div>
+            </div>
+          </section>
+
+          <!-- 4 · account -->
+          <section class="workspace" data-ws="account">
+            <div class="win scroll">
+              <span class="label">account</span>
+              <div class="scroller" id="account"></div>
+            </div>
+          </section>
+
+          <!-- 5 · settings -->
+          <section class="workspace" data-ws="settings">
+            <div class="win scroll">
+              <span class="label">settings</span>
+              <div class="scroller" id="settings"></div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <!-- launcher (Walker-style) -->
+    <div id="walker" class="overlay" hidden>
+      <div class="walker win" role="dialog" aria-label="Launcher">
+        <span class="label">run</span>
+        <div class="walker-input"><span class="ps1">›</span><input id="walker-q" placeholder="type a command or session…" autocomplete="off" spellcheck="false" /></div>
+        <ul id="walker-list" class="walker-list"></ul>
+      </div>
+    </div>
+
+    <!-- bottom sheet for pickers and forms -->
+    <div id="sheet" class="overlay" hidden>
+      <div class="sheet win" role="dialog">
+        <span class="label" id="sheet-label"></span>
+        <div class="sheet-grip" aria-hidden="true"></div>
+        <div id="sheet-body"></div>
+      </div>
+    </div>
+
+    <div id="toasts" aria-live="polite"></div>
+  </body>
+</html>
