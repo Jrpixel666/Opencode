@@ -124,6 +124,12 @@ All in `.env` (see [`.env.example`](.env.example)):
 
 Balances and limits you type in are saved in `data/budgets.json`.
 
+## Android app (APK)
+
+Prefer a real app over "Add to Home screen"? Install `opencode-pixel-<version>.apk` from the
+Releases page. It asks for your bridge address on first launch and adds camera capture, Google
+voice typing, notifications, keep-screen-on and share-to-app. See [`android/`](android/README.md).
+
 ## Releases
 
 Download the latest `.zip` from the repo's **Releases** page, or clone the repo. Every push to

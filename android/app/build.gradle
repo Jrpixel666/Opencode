@@ -1,0 +1,50 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Keep the APK version in step with the web app's package.json.
+def pkg = new groovy.json.JsonSlurper().parse(file('../../package.json'))
+def (major, minor, patch) = pkg.version.tokenize('.').collect { it.replaceAll(/\D.*/, '') as int }
+
+// Release signing comes from the environment (see android/README.md), never from the repo.
+def keystorePath = System.getenv('OCP_KEYSTORE')
+
+android {
+    namespace 'io.github.jrpixel666.opencodepixel'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'io.github.jrpixel666.opencodepixel'
+        minSdk 30
+        targetSdk 35
+        versionCode major * 10000 + minor * 100 + patch
+        versionName pkg.version
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                storePassword System.getenv('OCP_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('OCP_KEY_ALIAS') ?: 'opencode-pixel'
+                keyPassword System.getenv('OCP_KEY_PASSWORD') ?: System.getenv('OCP_KEYSTORE_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig keystorePath ? signingConfigs.release : null
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

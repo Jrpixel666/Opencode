@@ -30,6 +30,9 @@ const store = {
   },
 };
 
+// Present when running inside the Android app (android/), which adds native features.
+const native = window.OpencodeAndroid || null;
+
 const prefs = { appearance: "system", fontScale: 1, haptics: true, notify: false, wakeLock: true, enterSends: false, showReasoning: true, ...store.get("prefs", {}) };
 const savePrefs = () => store.set("prefs", prefs);
 const buzz = (ms = 8) => prefs.haptics && navigator.vibrate?.(ms);
@@ -277,8 +280,11 @@ function start() {
   handleShare();
   startEvents();
   loadAll().then(() => {
-    const page = new URLSearchParams(location.search).get("page");
-    if (PAGES[page]) openPage(page);
+    // Deep links from shortcuts and notifications: ?page=balance, ?session=…, ?new=1
+    const q = new URLSearchParams(location.search);
+    if (q.get("session")) openSession(q.get("session"));
+    else if (q.has("new")) newChat();
+    if (PAGES[q.get("page")]) openPage(q.get("page"));
     if (location.search) history.replaceState(history.state, "", "/");
   });
 }
@@ -882,6 +888,10 @@ function updateBusy() {
     r.innerHTML = `<b>${esc(a?.title || `Retrying (attempt ${rs.attempt})`)}</b><span>${esc(a?.message || rs.message || "")}${link}</span>${rs.next ? `<small class="muted">Next try ${new Date(rs.next).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · tap stop to cancel</small>` : ""}`;
   }
   updateSendBtn();
+  if (native) {
+    native.keepScreenOn(busy && prefs.wakeLock);
+    return;
+  }
   if (busy && prefs.wakeLock && !wakeLock && navigator.wakeLock) {
     navigator.wakeLock.request("screen").then((l) => {
       wakeLock = l;
@@ -892,6 +902,11 @@ function updateBusy() {
 }
 
 async function notifyDone(sessionID) {
+  if (prefs.notify && native) {
+    // The app only shows it while it's in the background.
+    const s = S.sessions.find((x) => x.id === sessionID);
+    return native.notify("opencode", `${s?.title || "Your chat"} is ready`, sessionID);
+  }
   if (!prefs.notify || !document.hidden || !("Notification" in window) || Notification.permission !== "granted") return;
   const s = S.sessions.find((x) => x.id === sessionID);
   const reg = await navigator.serviceWorker?.getRegistration();
@@ -907,7 +922,7 @@ let rec = null;
 function updateSendBtn() {
   const b = $("#send-btn");
   const hasInput = $("#prompt").value.trim() || S.attachments.length;
-  const mode = rec ? "rec" : hasInput ? "send" : isBusy() ? "stop" : SR ? "mic" : "send";
+  const mode = rec ? "rec" : hasInput ? "send" : isBusy() ? "stop" : SR || native ? "mic" : "send";
   b.dataset.mode = mode;
   b.innerHTML = { send: I.up, stop: I.stop, mic: I.mic, rec: I.mic }[mode];
   b.setAttribute("aria-label", { send: "Send", stop: "Stop", mic: "Dictate", rec: "Stop dictation" }[mode]);
@@ -967,7 +982,20 @@ async function stop() {
 }
 
 // Voice dictation (Chrome on Android has the Web Speech API).
+// The Android app's WebView has no Web Speech API, so it uses Google voice typing instead.
+window.__ocpDictation = (text, error) => {
+  if (error) return toast(error, "error");
+  if (!text) return;
+  const ta = $("#prompt");
+  ta.value = (ta.value ? ta.value.replace(/\s*$/, " ") : "") + text;
+  ta.dispatchEvent(new Event("input"));
+};
+
 function dictate() {
+  if (native) {
+    buzz(15);
+    return native.startDictation();
+  }
   if (rec) return rec.stop();
   const ta = $("#prompt");
   rec = new SR();
@@ -1404,7 +1432,7 @@ function renderSettings() {
     </div>
     <div class="section">App</div>
     <div class="group">
-      ${installEvt ? `<button class="row" id="install"><span class="row-main"><span>Install app</span><small>Add opencode to your home screen</small></span>${I.right}</button>` : `<div class="row"><span class="row-main"><span>${installed ? "Installed" : "Install app"}</span><small>${installed ? "Running as an app" : "Chrome menu ⋮ → Add to Home screen"}</small></span></div>`}
+      ${native ? `<button class="row" id="change-server"><span class="row-main"><span>Server</span><small>${esc(native.getServer())}</small></span><span class="btn">Change</span></button>` : installEvt ?`<button class="row" id="install"><span class="row-main"><span>Install app</span><small>Add opencode to your home screen</small></span>${I.right}</button>` : `<div class="row"><span class="row-main"><span>${installed ? "Installed" : "Install app"}</span><small>${installed ? "Running as an app" : "Chrome menu ⋮ → Add to Home screen"}</small></span></div>`}
       <button class="row" id="reload-oc"><span class="row-main"><span>Reload opencode</span><small>Picks up new sign-ins and config</small></span>${I.right}</button>
       <button class="row" id="clear-cache"><span class="row-main"><span>Clear app cache</span></span>${I.right}</button>
     </div>
@@ -1420,6 +1448,8 @@ $("#settings").addEventListener("click", async (e) => {
     applyAppearance(prefs.appearance);
     buzz();
     renderSettings();
+  } else if (t.id === "change-server") {
+    native.resetServer();
   } else if (t.id === "install" && installEvt) {
     installEvt.prompt();
     await installEvt.userChoice;
@@ -1440,7 +1470,15 @@ $("#settings").addEventListener("change", async (e) => {
   const k = e.target.dataset.pref;
   if (!k) return;
   prefs[k] = e.target.checked;
-  if (k === "notify" && prefs.notify && "Notification" in window && Notification.permission !== "granted") {
+  if (k === "notify" && prefs.notify && native && !native.canNotify()) {
+    window.__ocpNotifyPermission = (ok) => {
+      prefs.notify = ok;
+      e.target.checked = ok;
+      savePrefs();
+      if (!ok) toast("Notifications are off for opencode in Android settings", "error");
+    };
+    native.requestNotifications();
+  } else if (k === "notify" && prefs.notify && "Notification" in window && Notification.permission !== "granted") {
     prefs.notify = (await Notification.requestPermission()) === "granted";
     e.target.checked = prefs.notify;
   }

@@ -3,6 +3,10 @@ name: Release
 # Publishes a GitHub release for the version in package.json whenever main gets a version
 # that hasn't been released yet. To ship a new version: bump "version" in package.json,
 # add a section for it to CHANGELOG.md, and merge to main.
+#
+# The Android APK is attached when the ANDROID_KEYSTORE_BASE64 and ANDROID_KEYSTORE_PASSWORD
+# secrets are set (see android/README.md). If a release went out before they were added,
+# run this workflow by hand (Actions → Release → Run workflow) to attach the APK.
 on:
   push:
     branches: [main]
@@ -18,46 +22,66 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HAS_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Read version
-        id: v
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Skip if already released
-        id: exists
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Read version and release state
+        id: s
         run: |
-          if gh release view "v${{ steps.v.outputs.version }}" >/dev/null 2>&1; then
-            echo "v${{ steps.v.outputs.version }} is already released"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+          V=$(node -p "require('./package.json').version")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if gh release view "v$V" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            if gh release view "v$V" --json assets -q '.assets[].name' | grep -q '\.apk$'; then echo "has_apk=true" >> "$GITHUB_OUTPUT"; fi
           fi
 
       - name: Check
-        if: steps.exists.outputs.skip != 'true'
         run: npm run check
 
-      - name: Package
-        if: steps.exists.outputs.skip != 'true'
+      - name: Publish release
+        if: steps.s.outputs.exists != 'true'
         run: |
-          V=${{ steps.v.outputs.version }}
+          V=${{ steps.s.outputs.version }}
           mkdir -p dist
           git archive --format=zip --prefix="opencode-pixel-$V/" -o "dist/opencode-pixel-$V.zip" HEAD
           git archive --format=tar.gz --prefix="opencode-pixel-$V/" -o "dist/opencode-pixel-$V.tar.gz" HEAD
           (cd dist && sha256sum * > SHA256SUMS.txt)
-          # Release notes: this version's section of CHANGELOG.md
           awk -v v="$V" '$0 ~ "^## \\[?"v"\\]?" {on=1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
           [ -s notes.md ] || echo "Release $V" > notes.md
-
-      - name: Publish release
-        if: steps.exists.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          V=${{ steps.v.outputs.version }}
           gh release create "v$V" dist/* --target "$GITHUB_SHA" --title "opencode·pixel v$V" --notes-file notes.md
+
+      - uses: actions/setup-java@v4
+        if: env.HAS_KEY == 'true' && steps.s.outputs.has_apk != 'true'
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        if: env.HAS_KEY == 'true' && steps.s.outputs.has_apk != 'true'
+        with:
+          gradle-version: "8.14.3"
+
+      - name: Build and attach the Android APK
+        if: env.HAS_KEY == 'true' && steps.s.outputs.has_apk != 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          OCP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          V=${{ steps.s.outputs.version }}
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/ocp.keystore"
+          export OCP_KEYSTORE="$RUNNER_TEMP/ocp.keystore"
+          (cd android && gradle --no-daemon assembleRelease)
+          rm -f "$RUNNER_TEMP/ocp.keystore"
+          mkdir -p apk
+          cp android/app/build/outputs/apk/release/app-release.apk "apk/opencode-pixel-$V.apk"
+          (cd apk && sha256sum *.apk > "opencode-pixel-$V.apk.sha256")
+          gh release upload "v$V" apk/*
+
+      - name: Note a missing APK
+        if: env.HAS_KEY != 'true'
+        run: echo "::notice::No ANDROID_KEYSTORE_BASE64 secret, so no APK was attached. See android/README.md."

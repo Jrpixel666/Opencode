@@ -25,6 +25,12 @@ export function applyAppearance(mode = "system") {
   root.style.colorScheme = dark ? "dark" : "light";
   root.dataset.appearance = dark ? "dark" : "light";
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", p.bg);
+  // Inside the Android app: match the status and navigation bars.
+  try {
+    window.OpencodeAndroid?.setTheme(p.bg, dark);
+  } catch {
+    /* older app build */
+  }
   return dark;
 }
 
