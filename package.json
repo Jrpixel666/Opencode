@@ -1,7 +1,7 @@
 {
   "name": "opencode-pixel",
   "version": "0.1.0",
-  "description": "A Pixel 9 optimized, Omarchy-styled mobile app for opencode: chat with your coding agent, manage provider logins, and see balance per model.",
+  "description": "A Pixel 9 optimized mobile app for opencode with a warm, Claude-app-style chat design: chat with your coding agent, manage provider logins, and see balance per model.",
   "type": "module",
   "license": "MIT",
   "engines": {

@@ -1,7 +1,7 @@
 // Service worker: makes the app installable, starts instantly from cache, and opens the
 // right session when you tap a "reply finished" notification. API calls are never cached.
-const VERSION = "ocp-v1";
-const SHELL = ["/", "/index.html", "/style.css", "/app.js", "/js/api.js", "/js/markdown.js", "/js/themes.js", "/manifest.webmanifest", "/icons/icon.svg", "/icons/icon-192.png", "/icons/icon-512.png"];
+const VERSION = "ocp-v2";
+const SHELL = ["/", "/index.html", "/style.css", "/app.js", "/js/api.js", "/js/markdown.js", "/js/themes.js", "/js/icons.js", "/manifest.webmanifest", "/icons/icon.svg", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -44,7 +44,7 @@ self.addEventListener("notificationclick", (e) => {
         c.postMessage({ type: "open-session", sessionID });
         return c.focus();
       }
-      return self.clients.openWindow("/?ws=0");
+      return self.clients.openWindow("/");
     }),
   );
 });

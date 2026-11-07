@@ -1,32 +1,33 @@
 # opencode·pixel
 
-A phone app for [opencode](https://opencode.ai), built for the **Pixel 9** and styled like the
-**Omarchy** desktop (Hyprland tiles, Waybar, Walker launcher, mako toasts, Tokyo Night by default).
+A phone app for [opencode](https://opencode.ai), built for the **Pixel 9**, with a calm,
+warm chat design in the style of the Claude Android app: ivory and charcoal themes, a
+terracotta accent, serif replies, a rounded composer and a slide-out drawer. It is an
+independent project, not affiliated with Anthropic, and uses its own icon.
 
 Chat with your coding agent from your phone, log in to model providers, and see **how much
 balance you have left for each model**.
 
 <p>
-<img src="docs/chat.png" width="200" alt="Chat workspace">
+<img src="docs/chat.png" width="200" alt="Chat">
+<img src="docs/drawer.png" width="200" alt="Drawer with recent chats (dark)">
 <img src="docs/balance.png" width="200" alt="Balance per model">
-<img src="docs/account.png" width="200" alt="Account">
-<img src="docs/launcher.png" width="200" alt="Launcher in the Gruvbox theme">
+<img src="docs/models.png" width="200" alt="Model picker with balance left (dark)">
 </p>
 
 ## What it does
 
-| Workspace | What's there |
+| Screen | What's there |
 |---|---|
-| **1 · chat** | Streams replies live. Shows tool calls (bash, edit, read…), thinking, todos, and the cost and tokens of each reply. Approve or reject permission requests. Switch model and agent (build / plan). Stop a reply. Attach photos or PDFs (big camera shots are shrunk first). Dictate by voice. `/commands` run opencode commands. |
-| **2 · sessions** | All your opencode sessions. Filter, rename, share, delete. |
-| **3 · balance** | Spend today / 30 days / all time. **Balance per provider** and **balance left per model**, with rough tokens left at list price. Spend per model over 5 h / 24 h / 7 d / 30 d. Optional per-model monthly limits that work like OpenCode Go (5 h = 20 %, week = 50 %). |
-| **4 · account** | A fastfetch-style card: who's logged in, which server, project, spend. Your provider logins (OAuth or API key, keys masked). **Connect a provider** from the phone. Log out. |
-| **5 · settings** | 9 Omarchy-style themes, text size, haptics, "reply finished" notifications, keep screen on while working, enter-to-send, install button. |
+| **Chat** | Streams replies live, with collapsible "Thought for 4s" and tool steps (Ran, Read, Edited…), a plan checklist, and the model, cost and tokens under each reply. Approve or deny permission requests. Pick the model (with balance left shown) and agent (Build / Plan) in the composer. Stop a reply. Add photos from the camera or gallery, or PDFs. Dictate by voice. `/commands` run opencode commands. Suggestions on an empty chat. |
+| **Drawer** | New chat, Balance, Account, search, recent chats (long-press or ⋯ to rename, share, delete), and your profile with the money available. |
+| **Balance** | Total available across providers, spend today / 30 days / all time, **balance per provider**, and **balance left per model** with rough tokens left at list price. Spend per model over 5 h / 24 h / 7 d / 30 d. Optional per-model monthly limits that work like OpenCode Go (5 h = 20 %, week = 50 %). |
+| **Account** | Who's logged in, server, project, spend. Your provider logins (OAuth or API key, keys masked). **Add a provider** from the phone. Log out. |
+| **Settings** | System / Light / Dark, text size, show thinking, enter-to-send, "reply finished" notifications, keep screen on while working, haptics, install button. |
 
-On the phone: **swipe left/right to change workspace**, tap the grid icon or the clock for
-the launcher, use the Android back gesture to close sheets. Share text from any app to
-"opencode" and it lands in a new chat. Long-press the home-screen icon for shortcuts.
-Turned sideways (or on a Fold), chat tiles next to the workspace you picked.
+On the phone: **swipe right on the chat to open the drawer**, use the Android back gesture
+to close pages and sheets. Share text from any app to "opencode" and it lands in a new chat.
+Long-press the home-screen icon for shortcuts to a new chat, Balance or Account.
 
 ### Where balances come from
 

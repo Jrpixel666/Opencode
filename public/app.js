@@ -1,9 +1,10 @@
-// opencode·pixel — phone client for `opencode serve`, styled after Omarchy.
+// opencode·pixel — phone client for `opencode serve`, in the style of the Claude Android app.
 import { api, oc, onUnauthorized } from "./js/api.js";
 import { markdown, esc } from "./js/markdown.js";
-import { THEMES, applyTheme } from "./js/themes.js";
+import { applyAppearance, onSystemAppearanceChange } from "./js/themes.js";
+import { I } from "./js/icons.js";
 
-// ── tiny helpers ──────────────────────────────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────────────────
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const h = (html) => {
@@ -11,7 +12,6 @@ const h = (html) => {
   t.innerHTML = html.trim();
   return t.content.firstElementChild;
 };
-
 const store = {
   get(k, d) {
     try {
@@ -25,34 +25,23 @@ const store = {
     try {
       localStorage.setItem(`ocb.${k}`, JSON.stringify(v));
     } catch {
-      /* private mode etc. */
+      /* private mode */
     }
   },
 };
 
-const prefs = {
-  theme: "tokyo-night",
-  fontScale: 1,
-  haptics: true,
-  notify: false,
-  wakeLock: true,
-  enterSends: false,
-  showReasoning: true,
-  ...store.get("prefs", {}),
-};
+const prefs = { appearance: "system", fontScale: 1, haptics: true, notify: false, wakeLock: true, enterSends: false, showReasoning: true, ...store.get("prefs", {}) };
 const savePrefs = () => store.set("prefs", prefs);
-
 const buzz = (ms = 8) => prefs.haptics && navigator.vibrate?.(ms);
 
-export function money(n, cur = "USD") {
+function money(n, cur = "USD") {
   if (n === null || n === undefined || !Number.isFinite(n)) return "—";
   const abs = Math.abs(n);
   const digits = abs > 0 && abs < 0.01 ? 4 : 2;
   const s = abs.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
-  const sign = n < 0 ? "−" : "";
-  return cur === "USD" ? `${sign}$${s}` : `${sign}${s} ${cur}`;
+  return `${n < 0 ? "−" : ""}${cur === "USD" ? "$" + s : `${s} ${cur}`}`;
 }
-export function compact(n) {
+function compact(n) {
   if (!Number.isFinite(n)) return "—";
   if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
@@ -62,70 +51,195 @@ export function compact(n) {
 function ago(t) {
   if (!t) return "";
   const s = Math.round((Date.now() - t) / 1000);
-  if (s < 60) return "now";
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  if (s < 86400 * 7) return `${Math.floor(s / 86400)}d`;
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 86400 * 7) return `${Math.floor(s / 86400)}d ago`;
   return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-// ── toasts (mako-style) ───────────────────────────────────────────────────────────────
-function toast(text, kind = "info", ms = 3500) {
-  const el = h(`<div class="toast ${kind}"><b>${kind === "error" ? "error" : kind === "ok" ? "done" : "opencode"}</b><span></span></div>`);
-  el.querySelector("span").textContent = text;
+// Snackbar, Android style.
+function toast(text, kind = "info", ms = 3200) {
+  const el = h(`<div class="toast ${kind}"></div>`);
+  el.textContent = text;
   $("#toasts").append(el);
   el.addEventListener("click", () => el.remove());
   setTimeout(() => el.classList.add("out"), ms);
-  setTimeout(() => el.remove(), ms + 400);
+  setTimeout(() => el.remove(), ms + 300);
 }
+
+// Fill static icon slots.
+$$("[data-i]").forEach((el) => (el.innerHTML = I[el.dataset.i] || ""));
+$("#menu-btn").innerHTML = I.menu;
+$("#new-btn").innerHTML = I.compose;
+$("#title-chev").innerHTML = I.down;
+$("#attach-btn").innerHTML = I.plus;
+$("#jump").innerHTML = I.down;
+$("#bal-refresh").innerHTML = I.refresh;
+$$(".pagebar .back").forEach((b) => (b.innerHTML = I.back));
+$("#login-mark").innerHTML = I.mark;
+$("#drawer-mark").innerHTML = I.mark;
 
 // ── state ─────────────────────────────────────────────────────────────────────────────
 const S = {
   me: null,
   sessions: [],
-  status: {}, // sessionID -> SessionStatus
+  status: {},
   current: store.get("session", null),
-  msgs: new Map(), // messageID -> { info, parts: Map }
-  perms: new Map(), // permissionID -> Permission
-  providers: [], // /config/providers
-  model: store.get("model", null), // { providerID, modelID }
+  msgs: new Map(),
+  perms: new Map(),
+  providers: [],
+  model: store.get("model", null),
   agents: [],
   agent: store.get("agent", "build"),
   balances: null,
   accounts: null,
   attachments: [],
-  ws: 0,
 };
 
-const WORKSPACES = [
-  { id: "chat", n: 1, label: "chat" },
-  { id: "sessions", n: 2, label: "sessions" },
-  { id: "balance", n: 3, label: "balance" },
-  { id: "account", n: 4, label: "account" },
-  { id: "settings", n: 5, label: "settings" },
-];
-
-// ── boot ──────────────────────────────────────────────────────────────────────────────
-applyTheme(prefs.theme);
+// ── appearance ────────────────────────────────────────────────────────────────────────
+applyAppearance(prefs.appearance);
+onSystemAppearanceChange(() => applyAppearance(prefs.appearance));
 document.documentElement.style.setProperty("--scale", prefs.fontScale);
+
+// ── layers: drawer / pages / sheet, closed by the Android back gesture ────────────────
+const layers = [];
+function pushLayer(name, close, { replace = false } = {}) {
+  if (replace && layers.length) {
+    layers[layers.length - 1].close(true);
+    layers[layers.length - 1] = { name, close };
+    history.replaceState({ layer: layers.length }, "");
+  } else {
+    layers.push({ name, close });
+    history.pushState({ layer: layers.length }, "");
+  }
+}
+function popLayer() {
+  if (layers.length) history.back();
+}
+window.addEventListener("popstate", () => {
+  const l = layers.pop();
+  l?.close();
+});
+const topLayer = () => layers[layers.length - 1]?.name;
+
+// drawer
+function openDrawer() {
+  if (topLayer() === "drawer") return;
+  renderRecents();
+  showDrawer(true);
+  pushLayer("drawer", () => showDrawer(false));
+  buzz(5);
+}
+function showDrawer(on) {
+  const d = $("#drawer");
+  d.classList.toggle("open", on);
+  d.style.transform = "";
+  d.toggleAttribute("inert", !on);
+  $("#scrim").hidden = !on;
+}
+$("#menu-btn").addEventListener("click", openDrawer);
+$("#scrim").addEventListener("click", popLayer);
+
+// Swipe right on the chat opens the drawer; swipe left on the drawer closes it.
+(() => {
+  const d = $("#drawer");
+  let x0 = null, y0 = 0, dx = 0, mode = null, locked = false;
+  document.addEventListener("touchstart", (e) => {
+    const t = e.touches[0];
+    const open = d.classList.contains("open");
+    if (!open && (topLayer() || $("#app").hidden || !e.target.closest("#chat") || e.target.closest("pre, .table, .t-out, .att"))) return;
+    if (open && !d.contains(e.target) && e.target.id !== "scrim") return;
+    x0 = t.clientX; y0 = t.clientY; dx = 0; locked = false; mode = open ? "close" : "open";
+  }, { passive: true });
+  document.addEventListener("touchmove", (e) => {
+    if (x0 === null) return;
+    dx = e.touches[0].clientX - x0;
+    const dy = e.touches[0].clientY - y0;
+    if (!locked) {
+      if (Math.hypot(dx, dy) < 12) return;
+      if (Math.abs(dx) < Math.abs(dy) * 1.5 || (mode === "open" && dx < 0)) return (x0 = null);
+      locked = true;
+    }
+    const w = d.offsetWidth;
+    const off = mode === "open" ? Math.min(0, -w + dx) : Math.min(0, dx);
+    d.classList.add("dragging");
+    d.style.transform = `translateX(${off}px)`;
+    if (mode === "open") $("#scrim").hidden = false;
+  }, { passive: true });
+  document.addEventListener("touchend", () => {
+    if (x0 === null) return;
+    x0 = null;
+    if (!locked) return;
+    d.classList.remove("dragging");
+    d.style.transform = "";
+    if (mode === "open") dx > 70 ? openDrawer() : ($("#scrim").hidden = true);
+    else if (dx < -70) popLayer();
+  });
+})();
+
+// pages
+const PAGES = { balance: renderBalance, account: renderAccount, settings: renderSettings };
+function openPage(name) {
+  const el = $(`#page-${name}`);
+  el.hidden = false;
+  el.classList.remove("closing");
+  // Coming from the drawer, the page takes the drawer's place so one "back" returns to chat.
+  pushLayer(`page:${name}`, (instant) => {
+    if (instant) return (el.hidden = true);
+    el.classList.add("closing");
+    setTimeout(() => (el.hidden = true), 190);
+  }, { replace: topLayer() === "drawer" });
+  if (name === "balance") refreshBalances();
+  else PAGES[name]();
+}
+$$("[data-page]").forEach((b) => b.addEventListener("click", () => openPage(b.dataset.page)));
+$$(".pagebar .back").forEach((b) => b.addEventListener("click", popLayer));
+
+// sheet
+function openSheet(title, body) {
+  $("#sheet-label").textContent = title;
+  $("#sheet-body").replaceChildren(body);
+  $("#sheet").hidden = false;
+  pushLayer("sheet", () => {
+    $("#sheet").hidden = true;
+    $("#sheet-body").replaceChildren();
+  });
+}
+const closeSheet = () => topLayer() === "sheet" && popLayer();
+$("#sheet").addEventListener("click", (e) => e.target.id === "sheet" && closeSheet());
+(() => {
+  let y0 = null;
+  const sheet = $("#sheet .sheet");
+  const grip = $(".sheet-grip");
+  grip.addEventListener("touchstart", (e) => (y0 = e.touches[0].clientY), { passive: true });
+  grip.addEventListener("touchmove", (e) => y0 !== null && (sheet.style.transform = `translateY(${Math.max(0, e.touches[0].clientY - y0)}px)`), { passive: true });
+  grip.addEventListener("touchend", (e) => {
+    const dy = e.changedTouches[0].clientY - y0;
+    y0 = null;
+    sheet.style.transform = "";
+    if (dy > 80) closeSheet();
+  });
+})();
+
+// ── boot & login ──────────────────────────────────────────────────────────────────────
 onUnauthorized(() => showLogin());
 
 async function boot() {
   try {
     S.me = await api("/api/me");
   } catch (e) {
-    if (e.status === 401) return showLogin();
-    toast(`Bridge unreachable: ${e.message}`, "error", 8000);
+    if (e.status !== 401) toast(`Can't reach the bridge: ${e.message}`, "error", 8000);
     return showLogin();
   }
-  startDesktop();
+  start();
 }
 
 function showLogin() {
   stopEvents();
-  $("#desktop").hidden = true;
+  $("#app").hidden = true;
   $("#login").hidden = false;
-  $("#login-host").textContent = location.host;
+  $("#login-host").textContent = `Sign in to opencode on ${location.host}`;
   const u = $('#login-form [name="username"]');
   if (!u.value) u.value = store.get("lastUser", "");
   (u.value ? $('#login-form [name="password"]') : u).focus();
@@ -141,7 +255,6 @@ $("#login-form").addEventListener("submit", async (e) => {
     await api("/api/login", { method: "POST", body: { username: f.get("username"), password: f.get("password") } });
     store.set("lastUser", f.get("username"));
     e.target.reset();
-    $("#login").hidden = true;
     buzz(15);
     boot();
   } catch (err) {
@@ -153,160 +266,50 @@ $("#login-form").addEventListener("submit", async (e) => {
 });
 
 let started = false;
-function startDesktop() {
+function start() {
   $("#login").hidden = true;
-  $("#desktop").hidden = false;
+  $("#app").hidden = false;
   if (!started) {
     started = true;
-    buildWaybar();
-    initSwipe();
     initComposer();
-    initWalker();
-    initSheet();
-    initKeys();
   }
-  const want = store.get("ws", 0);
-  goWs(new URLSearchParams(location.search).has("ws") ? Number(new URLSearchParams(location.search).get("ws")) : want, false);
+  renderProfile();
   handleShare();
   startEvents();
-  loadAll();
+  loadAll().then(() => {
+    const page = new URLSearchParams(location.search).get("page");
+    if (PAGES[page]) openPage(page);
+    if (location.search) history.replaceState(history.state, "", "/");
+  });
 }
 
 async function loadAll() {
   await Promise.allSettled([loadModels(), loadSessions()]);
-  if (S.current && S.sessions.some((s) => s.id === S.current)) openSession(S.current, false);
+  if (S.current && S.sessions.some((s) => s.id === S.current)) await openSession(S.current, false);
   else renderChat();
   refreshBalances();
-  renderAccount();
-  renderSettings();
 }
 
-// ── waybar ────────────────────────────────────────────────────────────────────────────
-function buildWaybar() {
-  const nav = $("#ws-nav");
-  for (const [i, w] of WORKSPACES.entries()) {
-    const b = h(`<button class="ws" aria-label="${w.label}" title="${w.label}">${w.n}</button>`);
-    b.addEventListener("click", () => goWs(i));
-    nav.append(b);
-  }
-  $("#super").addEventListener("click", openWalker);
-  $("#wb-spend").addEventListener("click", () => goWs(2));
-  $("#clock").addEventListener("click", openWalker);
-  const tick = () => {
-    const d = new Date();
-    $("#clock").textContent = d.toLocaleDateString(undefined, { weekday: "short" }) + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-  };
-  tick();
-  setInterval(tick, 15_000);
-  navigator.getBattery?.().then((b) => {
-    const upd = () => {
-      const el = $("#wb-batt");
-      el.hidden = false;
-      const pct = Math.round(b.level * 100);
-      el.textContent = `${b.charging ? "⚡" : ""}${pct}%`;
-      el.classList.toggle("low", pct <= 20 && !b.charging);
-    };
-    upd();
-    b.addEventListener("levelchange", upd);
-    b.addEventListener("chargingchange", upd);
-  });
+function renderProfile() {
+  const name = S.me?.user?.name || "me";
+  $("#avatar").textContent = name[0];
+  $("#profile-name").textContent = name;
+  const left = S.balances?.providers?.reduce((s, p) => s + (Number.isFinite(p.balance.amount) && p.balance.currency === "USD" ? p.balance.amount : 0), 0);
+  $("#profile-sub").textContent = left ? `${money(left)} available` : S.me?.opencode?.reachable === false ? "opencode offline" : "Settings";
+  $("#nav-balance").textContent = left ? money(left) : "";
 }
 
-function setNet(state) {
-  const el = $("#wb-net");
-  el.dataset.state = state;
-  el.title = { up: "connected to opencode", down: "disconnected — retrying", wait: "connecting…" }[state];
-}
-
-// ── workspaces & swipe ────────────────────────────────────────────────────────────────
-function goWs(i, animate = true) {
-  i = Math.max(0, Math.min(WORKSPACES.length - 1, Number.isFinite(i) ? i : 0));
-  const changed = i !== S.ws;
-  S.ws = i;
-  store.set("ws", i);
-  const track = $("#track");
-  track.classList.toggle("anim", animate);
-  track.style.transform = `translateX(${-i * 100}%)`;
-  $$("#ws-nav .ws").forEach((b, j) => b.classList.toggle("active", i === j));
-  if (i > 0) S.side = i;
-  track.dataset.side = WORKSPACES[S.side || 1].id;
-  const wide = matchMedia("(min-width: 760px)").matches;
-  $$(".workspace").forEach((w, j) => w.toggleAttribute("inert", wide ? j !== 0 && j !== (S.side || 1) : i !== j));
-  if (changed) buzz(5);
-  const id = WORKSPACES[i].id;
-  if (id === "balance" && changed) refreshBalances();
-  if (id === "account" && changed) renderAccount();
-  if (id === "chat") requestAnimationFrame(() => scrollChat(false));
-}
-
-matchMedia("(min-width: 760px)").addEventListener("change", () => goWs(S.ws, false));
-
-function initSwipe() {
-  const vp = $("#viewport");
-  const track = $("#track");
-  let x0 = 0, y0 = 0, dx = 0, active = false, locked = null;
-  vp.addEventListener(
-    "touchstart",
-    (e) => {
-      if (e.touches.length !== 1 || matchMedia("(min-width: 760px)").matches || e.target.closest("pre, .table, .hscroll, textarea, input, .sheet")) return (active = false);
-      active = true;
-      locked = null;
-      x0 = e.touches[0].clientX;
-      y0 = e.touches[0].clientY;
-      dx = 0;
-    },
-    { passive: true },
-  );
-  vp.addEventListener(
-    "touchmove",
-    (e) => {
-      if (!active) return;
-      dx = e.touches[0].clientX - x0;
-      const dy = e.touches[0].clientY - y0;
-      if (locked === null && Math.hypot(dx, dy) > 12) locked = Math.abs(dx) > Math.abs(dy) * 1.6 ? "x" : "y";
-      if (locked !== "x") return;
-      const edge = (S.ws === 0 && dx > 0) || (S.ws === WORKSPACES.length - 1 && dx < 0);
-      track.classList.remove("anim");
-      track.style.transform = `translateX(calc(${-S.ws * 100}% + ${edge ? dx / 4 : dx}px))`;
-    },
-    { passive: true },
-  );
-  vp.addEventListener("touchend", () => {
-    if (!active) return;
-    active = false;
-    if (locked !== "x") return;
-    const w = vp.clientWidth;
-    if (dx < -w * 0.22) goWs(S.ws + 1);
-    else if (dx > w * 0.22) goWs(S.ws - 1);
-    else goWs(S.ws);
-  });
-}
-
-function initKeys() {
-  document.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-      e.preventDefault();
-      openWalker();
-    } else if (e.altKey && /^[1-5]$/.test(e.key)) {
-      e.preventDefault();
-      goWs(Number(e.key) - 1);
-    } else if (e.key === "Escape") {
-      closeWalker();
-      closeSheet();
-    }
-  });
-}
-
-// ── live events from opencode (SSE) ───────────────────────────────────────────────────
+// ── live events (SSE) ─────────────────────────────────────────────────────────────────
 let es = null;
 let retry = 1000;
+let online = true;
 function startEvents() {
   stopEvents();
-  setNet("wait");
   es = new EventSource("/api/oc/event");
   es.onopen = () => {
     retry = 1000;
-    setNet("up");
+    if (!online) toast("Reconnected");
+    online = true;
   };
   es.onmessage = (m) => {
     try {
@@ -316,20 +319,20 @@ function startEvents() {
     }
   };
   es.onerror = () => {
-    setNet("down");
     es?.close();
     es = null;
+    if (online) toast("Connection lost — retrying…", "error");
+    online = false;
     setTimeout(async () => {
-      if (es || $("#desktop").hidden) return;
+      if (es || $("#app").hidden) return;
       try {
-        await api("/api/me"); // also detects an expired login
+        await api("/api/me");
         startEvents();
         loadSessions();
         if (S.current) loadMessages(S.current);
       } catch {
         retry = Math.min(retry * 2, 30_000);
-        es = null;
-        setTimeout(() => !es && !$("#desktop").hidden && startEvents(), retry);
+        setTimeout(() => !es && !$("#app").hidden && startEvents(), retry);
       }
     }, retry);
   };
@@ -339,14 +342,11 @@ function stopEvents() {
   es = null;
 }
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && !$("#desktop").hidden && !es) startEvents();
+  if (!document.hidden && !$("#app").hidden && !es) startEvents();
 });
 
 function onEvent({ type, properties: p }) {
   switch (type) {
-    case "server.connected":
-      setNet("up");
-      break;
     case "message.updated": {
       const info = p.info;
       if (info.sessionID !== S.current) break;
@@ -380,31 +380,30 @@ function onEvent({ type, properties: p }) {
     case "session.status":
       S.status[p.sessionID] = p.status;
       updateBusy();
-      renderSessionList();
       break;
     case "session.idle":
       S.status[p.sessionID] = { type: "idle" };
       updateBusy();
-      renderSessionList();
       notifyDone(p.sessionID);
       break;
     case "session.created":
     case "session.updated": {
+      if (p.info.parentID) break;
       const i = S.sessions.findIndex((s) => s.id === p.info.id);
       if (i >= 0) S.sessions[i] = p.info;
       else S.sessions.unshift(p.info);
       S.sessions.sort((a, b) => b.time.updated - a.time.updated);
-      renderSessionList();
-      if (p.info.id === S.current) renderChatHead();
+      if (topLayer() === "drawer") renderRecents();
+      if (p.info.id === S.current) renderTitle();
       break;
     }
     case "session.deleted":
       S.sessions = S.sessions.filter((s) => s.id !== p.info.id);
-      renderSessionList();
+      if (topLayer() === "drawer") renderRecents();
       if (p.info.id === S.current) newChat();
       break;
     case "session.error":
-      if (!p.sessionID || p.sessionID === S.current) toast(p.error?.data?.message || p.error?.name || "Session error", "error", 7000);
+      if (!p.sessionID || p.sessionID === S.current) toast(p.error?.data?.message || p.error?.name || "Something went wrong", "error", 7000);
       break;
     case "permission.updated":
       S.perms.set(p.id, p);
@@ -415,8 +414,6 @@ function onEvent({ type, properties: p }) {
     case "permission.replied":
       S.perms.delete(p.permissionID);
       renderPerms();
-      break;
-    case "todo.updated":
       break;
   }
 }
@@ -441,7 +438,7 @@ async function loadModels() {
     }
     S.model = m;
   }
-  renderChatHead();
+  renderComposerBar();
 }
 
 function modelInfo(m = S.model) {
@@ -449,17 +446,24 @@ function modelInfo(m = S.model) {
   const p = S.providers.find((x) => x.id === m.providerID);
   return p?.models?.[m.modelID] ? { provider: p, model: p.models[m.modelID] } : null;
 }
-
 function setModel(m) {
   S.model = m;
   store.set("model", m);
-  renderChatHead();
+  renderComposerBar();
+}
+
+function renderComposerBar() {
+  const mi = modelInfo();
+  $("#model-chip").innerHTML = `<span>${esc(mi ? mi.model.name : "Choose model")}</span>${I.down}`;
+  $("#agent-chip").textContent = S.agent[0].toUpperCase() + S.agent.slice(1);
+  $("#agent-chip").dataset.agent = S.agent;
+  updateSendBtn();
 }
 
 function openModelPicker() {
   const byKey = Object.fromEntries((S.balances?.models || []).map((m) => [m.key, m]));
-  const body = h(`<div class="picker"><input type="search" placeholder="search models…" class="picker-q" aria-label="Search models" /><div class="picker-list"></div></div>`);
-  const list = $(".picker-list", body);
+  const body = h(`<div><input type="search" placeholder="Search models" aria-label="Search models" /><div class="list"></div></div>`);
+  const list = $(".list", body);
   const draw = (q = "") => {
     q = q.toLowerCase();
     list.innerHTML = "";
@@ -471,10 +475,11 @@ function openModelPicker() {
         const b = byKey[`${p.id}/${m.id}`];
         const sel = S.model?.providerID === p.id && S.model?.modelID === m.id;
         const free = !m.cost?.input && !m.cost?.output;
-        const left = free ? `<span class="ok">free</span>` : b?.spendable !== null && b?.spendable !== undefined ? `<span class="${b.spendable <= 0 ? "bad" : "ok"}">${money(b.spendable, b.currency)}</span>` : `<span class="dim">—</span>`;
-        const row = h(`<button class="pick ${sel ? "sel" : ""}">
-          <span class="pick-main"><b>${esc(m.name)}</b><small class="dim">${esc(m.id)} · ${compact(m.limit?.context || 0)} ctx${m.capabilities?.reasoning ? " · think" : ""}${m.capabilities?.attachment ? " · img" : ""}</small></span>
-          <span class="pick-side">${left}<small class="dim">${free ? "" : `$${m.cost.input}/$${m.cost.output}`}</small></span></button>`);
+        const left = free ? `<span class="ok">Free</span>` : Number.isFinite(b?.spendable) ? `<span class="${b.spendable <= 0 ? "bad" : ""}">${money(b.spendable, b.currency)} left</span>` : "";
+        const feats = [`${compact(m.limit?.context || 0)} context`, m.capabilities?.reasoning && "thinking", m.capabilities?.attachment && "images"].filter(Boolean).join(" · ");
+        const row = h(`<button class="pick ${sel ? "sel" : ""}"><span class="pick-check">${sel ? I.check : ""}</span>
+          <span class="pick-main"><b>${esc(m.name)}</b><small>${feats}</small></span>
+          <span class="pick-side">${left}<small class="muted">${free ? "" : `$${m.cost.input} / $${m.cost.output}`}</small></span></button>`);
         row.addEventListener("click", () => {
           setModel({ providerID: p.id, modelID: m.id });
           buzz();
@@ -483,64 +488,104 @@ function openModelPicker() {
         list.append(row);
       }
     }
-    if (!list.children.length) list.append(h(`<p class="dim pad">No models. Connect a provider in workspace 4.</p>`));
+    if (!list.children.length) list.append(h(`<p class="muted pad">No models yet. Connect a provider in Account.</p>`));
   };
   draw();
-  $(".picker-q", body).addEventListener("input", (e) => draw(e.target.value));
-  openSheet("model · balance left · $/1M in/out", body);
+  $("input", body).addEventListener("input", (e) => draw(e.target.value));
+  openSheet("Choose a model", body);
+  setTimeout(() => $(".pick.sel", body)?.scrollIntoView({ block: "center" }), 60);
 }
+$("#model-chip").addEventListener("click", openModelPicker);
 
-// ── sessions ──────────────────────────────────────────────────────────────────────────
+$("#agent-chip").addEventListener("click", () => {
+  const body = h(`<div class="menu"></div>`);
+  for (const a of S.agents) {
+    const sel = a.name === S.agent;
+    const desc = a.description || (a.name === "plan" ? "Reads and plans, doesn't change files" : a.name === "build" ? "Can edit files and run commands" : "");
+    const b = h(`<button class="pick ${sel ? "sel" : ""}"><span class="pick-check">${sel ? I.check : ""}</span><span class="pick-main"><b>${esc(a.name[0].toUpperCase() + a.name.slice(1))}</b>${desc ? `<small>${esc(desc)}</small>` : ""}</span></button>`);
+    b.addEventListener("click", () => {
+      S.agent = a.name;
+      store.set("agent", a.name);
+      renderComposerBar();
+      buzz();
+      closeSheet();
+    });
+    body.append(b);
+  }
+  openSheet("Agent", body);
+});
+
+// ── sessions (drawer recents) ─────────────────────────────────────────────────────────
 async function loadSessions() {
   const [list, status] = await Promise.all([oc("/session"), oc("/session/status").catch(() => ({}))]);
   S.sessions = (list || []).filter((s) => !s.parentID).sort((a, b) => b.time.updated - a.time.updated);
   S.status = status || {};
-  renderSessionList();
   updateBusy();
 }
 
-function renderSessionList() {
-  const ul = $("#session-list");
+function renderRecents() {
+  const ul = $("#recents");
   const q = $("#session-filter").value.toLowerCase();
   ul.innerHTML = "";
   const rows = S.sessions.filter((s) => !q || s.title.toLowerCase().includes(q));
   for (const s of rows) {
-    const busy = S.status[s.id]?.type === "busy" || S.status[s.id]?.type === "retry";
-    const li = h(`<li class="row ${s.id === S.current ? "sel" : ""}">
-      <button class="row-main"><span class="row-title">${busy ? '<span class="spin"></span>' : ""}${esc(s.title)}</span>
-      <small class="dim">${ago(s.time.updated)}${s.summary?.files ? ` · ${s.summary.files} files <span class="ok">+${s.summary.additions}</span> <span class="bad">−${s.summary.deletions}</span>` : ""}</small></button>
-      <button class="icon-btn" aria-label="More">⋯</button></li>`);
-    li.querySelector(".row-main").addEventListener("click", () => {
+    const busy = ["busy", "retry"].includes(S.status[s.id]?.type);
+    const li = h(`<li class="recent ${s.id === S.current ? "sel" : ""}"><button class="recent-main">${busy ? '<i class="spin"></i>' : ""}<span>${esc(s.title)}</span></button><button class="icon-btn" aria-label="Options for ${esc(s.title)}">${I.more}</button></li>`);
+    const main = li.querySelector(".recent-main");
+    main.addEventListener("click", () => {
+      popLayer();
       openSession(s.id);
-      goWs(0);
     });
+    let lp;
+    main.addEventListener("touchstart", () => (lp = setTimeout(() => (buzz(20), sessionMenu(s)), 550)), { passive: true });
+    main.addEventListener("touchend", () => clearTimeout(lp));
+    main.addEventListener("touchmove", () => clearTimeout(lp), { passive: true });
     li.querySelector(".icon-btn").addEventListener("click", () => sessionMenu(s));
     ul.append(li);
   }
-  if (!rows.length) ul.append(h(`<li class="empty dim">${q ? "no match" : "no sessions yet — start one in workspace 1"}</li>`));
+  if (!rows.length) ul.append(h(`<li class="empty">${q ? "No matching chats" : "Your chats will show up here"}</li>`));
 }
-$("#session-filter").addEventListener("input", renderSessionList);
-$("#new-session").addEventListener("click", () => {
+$("#session-filter").addEventListener("input", renderRecents);
+$("#nav-new").addEventListener("click", () => {
+  popLayer();
   newChat();
-  goWs(0);
+});
+$("#new-btn").addEventListener("click", () => {
+  buzz();
+  newChat();
+});
+$("#title-btn").addEventListener("click", () => {
+  const s = S.sessions.find((x) => x.id === S.current);
+  s ? sessionMenu(s) : openModelPicker();
 });
 
 function sessionMenu(s) {
   const body = h(`<div class="menu">
-    <label class="field"><span>title</span><input value="${esc(s.title)}" maxlength="120" /></label>
-    <button class="btn" data-a="rename">rename</button>
-    ${s.share?.url ? `<a class="btn" href="${esc(s.share.url)}" target="_blank" rel="noopener">open share link</a>` : `<button class="btn" data-a="share">create share link</button>`}
-    <button class="btn danger" data-a="delete">delete session</button></div>`);
+    <form class="stack" style="padding:0 8px 8px"><input value="${esc(s.title)}" maxlength="120" aria-label="Chat title" /><button class="btn">Rename</button></form>
+    ${s.share?.url ? `<a class="pick" href="${esc(s.share.url)}" target="_blank" rel="noopener"><span class="nav-ico">${I.share}</span><span class="pick-main"><b>Open share link</b></span></a>` : `<button class="pick" data-a="share"><span class="nav-ico">${I.share}</span><span class="pick-main"><b>Share</b><small>Create a public link</small></span></button>`}
+    <button class="pick danger" data-a="delete"><span class="nav-ico">${I.trash}</span><span class="pick-main"><b>Delete</b></span></button></div>`);
+  $("form", body).addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await oc(`/session/${s.id}`, { method: "PATCH", body: { title: $("input", body).value.trim() || s.title } });
+      toast("Renamed");
+      closeSheet();
+      await loadSessions();
+      renderTitle();
+      if (layers.some((l) => l.name === "drawer")) renderRecents();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
   body.addEventListener("click", async (e) => {
-    const a = e.target.dataset.a;
+    const a = e.target.closest("[data-a]")?.dataset.a;
     if (!a) return;
     try {
-      if (a === "rename") await oc(`/session/${s.id}`, { method: "PATCH", body: { title: $("input", body).value.trim() || s.title } });
       if (a === "share") {
         const r = await oc(`/session/${s.id}/share`, { method: "POST" });
         if (r?.share?.url) {
           await navigator.clipboard?.writeText(r.share.url).catch(() => {});
-          toast("Share link copied", "ok");
+          toast("Share link copied");
         }
       }
       if (a === "delete") {
@@ -548,14 +593,15 @@ function sessionMenu(s) {
         await oc(`/session/${s.id}`, { method: "DELETE" });
         S.sessions = S.sessions.filter((x) => x.id !== s.id);
         if (S.current === s.id) newChat();
+        toast("Chat deleted");
       }
       closeSheet();
-      loadSessions();
+      if (topLayer() === "drawer") renderRecents();
     } catch (err) {
       toast(err.message, "error");
     }
   });
-  openSheet("session", body);
+  openSheet(s.title, body);
 }
 
 function newChat() {
@@ -563,7 +609,6 @@ function newChat() {
   store.set("session", null);
   S.msgs.clear();
   renderChat();
-  renderSessionList();
   $("#prompt").focus();
 }
 
@@ -572,7 +617,6 @@ async function openSession(id, focus = true) {
   store.set("session", id);
   S.msgs.clear();
   renderChat();
-  renderSessionList();
   await loadMessages(id);
   if (focus) buzz();
 }
@@ -583,7 +627,6 @@ async function loadMessages(id) {
     if (S.current !== id) return;
     S.msgs.clear();
     for (const { info, parts } of list || []) S.msgs.set(info.id, { info, parts: new Map(parts.map((p) => [p.id, p])) });
-    // Follow the model the session last used.
     const lastUser = [...S.msgs.values()].reverse().find((m) => m.info.role === "user");
     if (lastUser?.info.model && modelInfo(lastUser.info.model)) setModel(lastUser.info.model);
     renderChat();
@@ -594,45 +637,46 @@ async function loadMessages(id) {
 }
 
 // ── chat rendering ────────────────────────────────────────────────────────────────────
-function renderChatHead() {
+function renderTitle() {
   const s = S.sessions.find((x) => x.id === S.current);
-  $("#chat-title").textContent = s ? s.title : "new session";
-  const mi = modelInfo();
-  $("#model-chip").innerHTML = mi ? `${esc(mi.model.name)}<small>${esc(mi.provider.name)}</small>` : "pick model";
-  $("#agent-chip").textContent = S.agent;
-  $("#agent-chip").dataset.agent = S.agent;
+  $("#chat-title").textContent = s ? s.title.replace(/^New session - .*$/, "New chat") : "New chat";
+  $("#title-chev").hidden = !s;
 }
-$("#chat-title").addEventListener("click", () => goWs(1));
-$("#model-chip").addEventListener("click", openModelPicker);
-$("#agent-chip").addEventListener("click", () => {
-  const i = S.agents.findIndex((a) => a.name === S.agent);
-  S.agent = S.agents[(i + 1) % S.agents.length].name;
-  store.set("agent", S.agent);
-  buzz();
-  renderChatHead();
-  toast(`agent: ${S.agent}`);
-});
 
-function sortedMsgs() {
-  return [...S.msgs.values()].sort((a, b) => (a.info.time?.created || 0) - (b.info.time?.created || 0) || (a.info.id < b.info.id ? -1 : 1));
+function greeting() {
+  const hr = new Date().getHours();
+  const part = hr < 5 ? "Hello, night owl" : hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
+  return `${part}, ${S.me?.user?.name || "there"}`;
 }
+
+const SUGGESTIONS = ["Explain this codebase", "Find and fix a bug", "Write tests for recent changes", "What changed since yesterday?"];
 
 function renderChat() {
-  renderChatHead();
+  renderTitle();
   const log = $("#chat-log");
   log.innerHTML = "";
   const msgs = sortedMsgs();
   if (!msgs.length) {
-    const mi = modelInfo();
-    log.append(
-      h(`<div class="motd"><pre class="dim">${esc(`$ opencode --model ${S.model ? `${S.model.providerID}/${S.model.modelID}` : "?"} --agent ${S.agent}`)}</pre>
-        <p>New session. Ask anything about your project${S.me?.opencode?.directory ? ` in <code>${esc(S.me.opencode.directory)}</code>` : ""}.</p>
-        <p class="dim">swipe ← → between workspaces · tap the model chip to see balance per model${mi ? "" : " · no model yet: connect a provider in workspace 4"}</p></div>`),
+    const dir = S.me?.opencode?.worktree;
+    const el = h(`<div class="greeting">${I.mark}<h2>${esc(greeting())}</h2>
+      <p>${dir ? `Working in ${esc(dir.split("/").slice(-2).join("/"))}` : "Ask opencode about your project"}${modelInfo() ? "" : " · connect a provider in Account to start"}</p>
+      <div class="suggest">${SUGGESTIONS.map((s) => `<button type="button">${esc(s)}</button>`).join("")}</div></div>`);
+    $$(".suggest button", el).forEach((b) =>
+      b.addEventListener("click", () => {
+        $("#prompt").value = b.textContent;
+        $("#prompt").dispatchEvent(new Event("input"));
+        $("#prompt").focus();
+      }),
     );
+    log.append(el);
   }
   for (const m of msgs) log.append(renderMsg(m));
   renderPerms();
   updateBusy();
+}
+
+function sortedMsgs() {
+  return [...S.msgs.values()].sort((a, b) => (a.info.time?.created || 0) - (b.info.time?.created || 0) || (a.info.id < b.info.id ? -1 : 1));
 }
 
 const pending = new Set();
@@ -645,15 +689,18 @@ function flushRender() {
   raf = 0;
   const log = $("#chat-log");
   const stick = nearBottom();
-  $(".motd", log)?.remove();
+  $(".greeting", log)?.remove();
   for (const id of pending) {
     const m = S.msgs.get(id);
     if (!m) continue;
     const el = renderMsg(m);
     const old = $(`#m-${CSS.escape(id)}`, log);
-    if (old) old.replaceWith(el);
-    else {
-      // insert in time order (almost always: append)
+    if (old) {
+      // keep open/closed state of collapsible steps while streaming
+      const open = new Set($$("details[open]", old).map((d) => d.dataset.k));
+      $$("details", el).forEach((d) => open.has(d.dataset.k) && (d.open = true));
+      old.replaceWith(el);
+    } else {
       const next = [...log.children].find((c) => Number(c.dataset.t) > (m.info.time?.created || 0));
       log.insertBefore(el, next || null);
     }
@@ -665,7 +712,7 @@ function flushRender() {
 
 function nearBottom() {
   const log = $("#chat-log");
-  return log.scrollHeight - log.scrollTop - log.clientHeight < 120;
+  return log.scrollHeight - log.scrollTop - log.clientHeight < 140;
 }
 function scrollChat(smooth = true) {
   const log = $("#chat-log");
@@ -675,21 +722,50 @@ function scrollChat(smooth = true) {
 $("#jump").addEventListener("click", () => scrollChat());
 $("#chat-log").addEventListener("scroll", () => nearBottom() && ($("#jump").hidden = true), { passive: true });
 
-// copy buttons inside code blocks
 $("#chat-log").addEventListener("click", (e) => {
   const b = e.target.closest("[data-copy]");
-  if (!b) return;
-  const code = b.closest(".code")?.querySelector("code")?.textContent ?? "";
-  navigator.clipboard?.writeText(code).then(() => {
-    b.textContent = "copied";
-    buzz();
-    setTimeout(() => (b.textContent = "copy"), 1200);
-  });
+  if (b) {
+    const code = b.closest(".code")?.querySelector("code")?.textContent ?? "";
+    return copyText(code, () => {
+      b.textContent = "Copied";
+      setTimeout(() => (b.textContent = "Copy"), 1200);
+    });
+  }
+  const c = e.target.closest("[data-copy-msg]");
+  if (c) {
+    const m = S.msgs.get(c.dataset.copyMsg);
+    const text = [...(m?.parts.values() || [])].filter((p) => p.type === "text" && !p.synthetic).map((p) => p.text).join("\n\n");
+    copyText(text, () => {
+      c.innerHTML = I.check;
+      setTimeout(() => (c.innerHTML = I.copy), 1200);
+    });
+  }
 });
+function copyText(text, done) {
+  navigator.clipboard?.writeText(text).then(() => {
+    buzz();
+    done?.();
+  });
+}
+
+const TOOL_LABEL = {
+  bash: ["Ran", I.terminal],
+  read: ["Read", I.doc],
+  write: ["Wrote", I.pencil],
+  edit: ["Edited", I.pencil],
+  glob: ["Searched files", I.search],
+  grep: ["Searched", I.search],
+  list: ["Listed", I.list],
+  webfetch: ["Fetched", I.globe],
+  task: ["Delegated", I.tool],
+  todowrite: ["Updated plan", I.list],
+  todoread: ["Read plan", I.list],
+};
 
 function toolSummary(part) {
   const i = part.state?.input || {};
-  const rel = (p) => String(p || "").replace(S.me?.opencode?.directory ? S.me.opencode.directory + "/" : "\u0000", "");
+  const root = S.me?.opencode?.directory;
+  const rel = (p) => (root && String(p || "").startsWith(root + "/") ? String(p).slice(root.length + 1) : String(p || ""));
   switch (part.tool) {
     case "bash":
       return i.command;
@@ -700,14 +776,16 @@ function toolSummary(part) {
     case "glob":
     case "grep":
       return `${i.pattern || ""}${i.path ? ` in ${rel(i.path)}` : ""}`;
+    case "list":
+      return rel(i.path);
     case "webfetch":
       return i.url;
     case "task":
       return i.description;
     case "todowrite":
-      return `${(i.todos || []).length} todos`;
+      return `${(i.todos || []).length} steps`;
     default:
-      return part.state?.title || JSON.stringify(i).slice(0, 80);
+      return part.state?.title || "";
   }
 }
 
@@ -716,30 +794,32 @@ function renderPart(part) {
     case "text":
       if (part.synthetic || part.ignored || !part.text) return "";
       return `<div class="md">${markdown(part.text)}</div>`;
-    case "reasoning":
+    case "reasoning": {
       if (!prefs.showReasoning || !part.text?.trim()) return "";
-      return `<details class="reasoning"${part.time?.end ? "" : " open"}><summary>thinking${part.time?.end ? ` · ${((part.time.end - part.time.start) / 1000).toFixed(1)}s` : "…"}</summary><div class="md">${markdown(part.text)}</div></details>`;
+      const secs = part.time?.end ? Math.max(1, Math.round((part.time.end - part.time.start) / 1000)) : null;
+      return `<details class="reasoning" data-k="${esc(part.id)}"><summary>${secs ? `Thought for ${secs}s` : "Thinking…"}</summary><div class="md">${markdown(part.text)}</div></details>`;
+    }
     case "tool": {
       const st = part.state?.status || "pending";
-      const icon = { pending: "○", running: '<span class="spin"></span>', completed: "●", error: "✕" }[st];
+      const [label, icon] = TOOL_LABEL[part.tool] || [part.tool, I.tool];
       const out = st === "completed" ? part.state.output : st === "error" ? part.state.error : "";
-      const todos = part.tool === "todowrite" && Array.isArray(part.state?.input?.todos) ? `<ul class="todos">${part.state.input.todos.map((t) => `<li class="${esc(t.status)}">${t.status === "completed" ? "☑" : t.status === "in_progress" ? "◐" : "☐"} ${esc(t.content)}</li>`).join("")}</ul>` : "";
-      const head = `<span class="t-icon">${icon}</span><span class="t-name">${esc(part.tool)}</span><span class="t-arg">${esc(toolSummary(part) || "")}</span>`;
+      const todos = part.tool === "todowrite" && Array.isArray(part.state?.input?.todos) ? `<ul class="todos">${part.state.input.todos.map((t) => `<li class="${esc(t.status)}">${t.status === "completed" ? "✓" : t.status === "in_progress" ? "◐" : "○"} ${esc(t.content)}</li>`).join("")}</ul>` : "";
+      const stateIco = st === "running" || st === "pending" ? '<i class="spin"></i>' : st === "error" ? '<span class="bad">failed</span>' : "";
+      const head = `<span class="t-ico">${icon}</span><span class="t-text"><span class="t-name">${esc(label)}</span><span class="t-arg">${esc(toolSummary(part) || "")}</span></span><span class="t-state">${stateIco}</span>`;
       if (!out && !todos) return `<div class="tool ${st}">${head}</div>`;
-      return `<details class="tool ${st}"><summary>${head}</summary>${todos}${out ? `<pre class="t-out">${esc(String(out).slice(0, 6000))}${String(out).length > 6000 ? "\n…" : ""}</pre>` : ""}</details>`;
+      const txt = String(out);
+      return `<details class="tool ${st}" data-k="${esc(part.id)}"><summary>${head}</summary>${todos}${out ? `<pre class="t-out">${esc(txt.slice(0, 6000))}${txt.length > 6000 ? "\n…" : ""}</pre>` : ""}</details>`;
     }
     case "file":
       return part.mime?.startsWith("image/") && part.url?.startsWith("data:") ? `<img class="att" src="${esc(part.url)}" alt="${esc(part.filename || "image")}">` : `<div class="filechip">📎 ${esc(part.filename || part.url)}</div>`;
     case "patch":
-      return `<div class="note">✎ changed ${part.files?.length || 0} file(s)</div>`;
-    case "agent":
-      return `<div class="note">@${esc(part.name)}</div>`;
+      return `<div class="note">Changed ${part.files?.length || 0} file(s)</div>`;
     case "subtask":
-      return `<div class="note">↳ subtask (${esc(part.agent)}): ${esc(part.description)}</div>`;
+      return `<div class="note">Subtask (${esc(part.agent)}): ${esc(part.description)}</div>`;
     case "retry":
-      return `<div class="note warn">retrying (attempt ${part.attempt}) — ${esc(part.error?.data?.message || "")}</div>`;
+      return `<div class="note warn">Retrying (attempt ${part.attempt})…</div>`;
     case "compaction":
-      return `<div class="note">context compacted</div>`;
+      return `<div class="note">Earlier messages were summarized to save context</div>`;
     default:
       return "";
   }
@@ -750,16 +830,17 @@ function renderMsg(m) {
   const parts = [...m.parts.values()].sort((a, b) => (a.id < b.id ? -1 : 1));
   const html = parts.map(renderPart).join("");
   if (info.role === "user") {
-    return h(`<div class="msg user" id="m-${esc(info.id)}" data-t="${info.time?.created || 0}"><span class="ps1">❯</span><div class="body">${html}</div></div>`);
+    return h(`<div class="msg user" id="m-${esc(info.id)}" data-t="${info.time?.created || 0}">${html}</div>`);
   }
   const done = info.time?.completed;
   const t = info.tokens;
-  const foot = done
-    ? `<div class="foot dim">${esc(info.modelID || "")} · ${compact((t?.input || 0) + (t?.cache?.read || 0))} in · ${compact((t?.output || 0) + (t?.reasoning || 0))} out · ${money(info.cost || 0)} · ${((done - info.time.created) / 1000).toFixed(1)}s</div>`
+  const hasText = parts.some((p) => p.type === "text" && p.text && !p.synthetic);
+  const actions = done
+    ? `<div class="actions">${hasText ? `<button data-copy-msg="${esc(info.id)}" aria-label="Copy">${I.copy}</button>` : ""}<span class="meta">${esc(modelInfo({ providerID: info.providerID, modelID: info.modelID })?.model.name || info.modelID || "")} · ${money(info.cost || 0)} · ${compact((t?.input || 0) + (t?.cache?.read || 0))} in / ${compact((t?.output || 0) + (t?.reasoning || 0))} out</span></div>`
     : "";
-  const err = info.error ? `<div class="note bad">✕ ${esc(info.error.data?.message || info.error.name)}</div>` : "";
-  const working = !done && !info.error && !html ? `<div class="dim"><span class="spin"></span> working…</div>` : "";
-  return h(`<div class="msg asst" id="m-${esc(info.id)}" data-t="${info.time?.created || 0}">${html}${working}${err}${foot}</div>`);
+  const err = info.error ? `<div class="note bad">${esc(info.error.data?.message || info.error.name)}</div>` : "";
+  const working = !done && !info.error ? `<div class="working" aria-label="Working"><i></i><i></i><i></i></div>` : "";
+  return h(`<div class="msg asst" id="m-${esc(info.id)}" data-t="${info.time?.created || 0}">${html}${working}${err}${actions}</div>`);
 }
 
 function renderPerms() {
@@ -768,8 +849,8 @@ function renderPerms() {
   for (const p of S.perms.values()) {
     if (p.sessionID !== S.current) continue;
     const pat = Array.isArray(p.pattern) ? p.pattern.join(" ") : p.pattern || "";
-    const el = h(`<div class="perm"><div><b>permission · ${esc(p.type)}</b><p>${esc(p.title)}</p>${pat ? `<code>${esc(pat)}</code>` : ""}</div>
-      <div class="perm-btns"><button class="btn primary" data-r="once">allow</button><button class="btn" data-r="always">always</button><button class="btn danger" data-r="reject">reject</button></div></div>`);
+    const el = h(`<div class="perm"><div><b>Allow ${esc(p.type)}?</b><p>${esc(p.title)}</p>${pat ? `<code>${esc(pat)}</code>` : ""}</div>
+      <div class="perm-btns"><button class="btn" data-r="reject">Deny</button><button class="btn" data-r="always">Always</button><button class="btn primary" data-r="once">Allow</button></div></div>`);
     el.addEventListener("click", async (e) => {
       const r = e.target.dataset.r;
       if (!r) return;
@@ -787,22 +868,20 @@ function renderPerms() {
 }
 
 let wakeLock = null;
+function isBusy() {
+  return ["busy", "retry"].includes(S.status[S.current]?.type);
+}
 function updateBusy() {
-  const st = S.status[S.current]?.type;
-  const busy = st === "busy" || st === "retry";
-  $("#chat-busy").hidden = !busy;
-  $("#chat-label").textContent = st === "retry" ? `chat · retry ${S.status[S.current].attempt}` : busy ? "chat · working" : "chat";
-  // opencode reports provider trouble (rate limits, out of credit…) as a retry status.
+  const busy = isBusy();
   const r = $("#retry");
   const rs = S.status[S.current];
   r.hidden = rs?.type !== "retry";
   if (rs?.type === "retry") {
     const a = rs.action;
-    const link = a?.link && /^https?:\/\//.test(a.link) ? ` <a href="${esc(a.link)}" target="_blank" rel="noopener">${esc(a.label || "open")} ↗</a>` : "";
-    r.innerHTML = `<b>${esc(a?.title || `retrying (attempt ${rs.attempt})`)}</b><span>${esc(a?.message || rs.message || "")}${link}</span>${rs.next ? `<small class="dim">next try ${new Date(rs.next).toLocaleTimeString()} · tap ■ to stop</small>` : ""}`;
+    const link = a?.link && /^https?:\/\//.test(a.link) ? ` <a href="${esc(a.link)}" target="_blank" rel="noopener">${esc(a.label || "Open")}</a>` : "";
+    r.innerHTML = `<b>${esc(a?.title || `Retrying (attempt ${rs.attempt})`)}</b><span>${esc(a?.message || rs.message || "")}${link}</span>${rs.next ? `<small class="muted">Next try ${new Date(rs.next).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · tap stop to cancel</small>` : ""}`;
   }
-  $("#stop-btn").hidden = !busy;
-  $("#send-btn").hidden = busy && !$("#prompt").value.trim();
+  updateSendBtn();
   if (busy && prefs.wakeLock && !wakeLock && navigator.wakeLock) {
     navigator.wakeLock.request("screen").then((l) => {
       wakeLock = l;
@@ -813,21 +892,34 @@ function updateBusy() {
 }
 
 async function notifyDone(sessionID) {
-  if (!prefs.notify || !document.hidden || Notification?.permission !== "granted") return;
+  if (!prefs.notify || !document.hidden || !("Notification" in window) || Notification.permission !== "granted") return;
   const s = S.sessions.find((x) => x.id === sessionID);
   const reg = await navigator.serviceWorker?.getRegistration();
-  const opts = { body: `${s?.title || "session"} is done`, tag: sessionID, icon: "/icons/icon-192.png", badge: "/icons/badge.png", data: { sessionID } };
+  const opts = { body: `${s?.title || "Your chat"} is ready`, tag: sessionID, icon: "/icons/icon-192.png", badge: "/icons/badge.png", data: { sessionID } };
   if (reg) reg.showNotification("opencode", opts);
   else new Notification("opencode", opts);
 }
 
 // ── composer ──────────────────────────────────────────────────────────────────────────
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null;
+
+function updateSendBtn() {
+  const b = $("#send-btn");
+  const hasInput = $("#prompt").value.trim() || S.attachments.length;
+  const mode = rec ? "rec" : hasInput ? "send" : isBusy() ? "stop" : SR ? "mic" : "send";
+  b.dataset.mode = mode;
+  b.innerHTML = { send: I.up, stop: I.stop, mic: I.mic, rec: I.mic }[mode];
+  b.setAttribute("aria-label", { send: "Send", stop: "Stop", mic: "Dictate", rec: "Stop dictation" }[mode]);
+  b.disabled = mode === "send" && !hasInput;
+}
+
 function initComposer() {
   const ta = $("#prompt");
   const grow = () => {
     ta.style.height = "auto";
     ta.style.height = Math.min(ta.scrollHeight, window.innerHeight * 0.35) + "px";
-    updateBusy();
+    updateSendBtn();
   };
   ta.addEventListener("input", () => {
     grow();
@@ -838,55 +930,65 @@ function initComposer() {
   ta.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && (prefs.enterSends || e.ctrlKey || e.metaKey) && !e.isComposing) {
       e.preventDefault();
-      $("#composer").requestSubmit();
+      if ($("#prompt").value.trim()) send();
     }
   });
   $("#composer").addEventListener("submit", (e) => {
     e.preventDefault();
-    send();
+    const mode = $("#send-btn").dataset.mode;
+    if (mode === "send") send();
+    else if (mode === "stop") stop();
+    else if (mode === "mic" || mode === "rec") dictate();
   });
-  $("#stop-btn").addEventListener("click", async () => {
-    if (!S.current) return;
-    buzz(20);
-    await oc(`/session/${S.current}/abort`, { method: "POST" }).catch((err) => toast(err.message, "error"));
+  $("#attach-btn").addEventListener("click", () => {
+    const body = h(`<div class="menu">
+      <button class="pick" data-a="camera"><span class="nav-ico">${I.camera}</span><span class="pick-main"><b>Camera</b></span></button>
+      <button class="pick" data-a="photos"><span class="nav-ico">${I.image}</span><span class="pick-main"><b>Photos & files</b><small>Images or PDFs</small></span></button></div>`);
+    body.addEventListener("click", (e) => {
+      const a = e.target.closest("[data-a]")?.dataset.a;
+      if (!a) return;
+      closeSheet();
+      $(a === "camera" ? "#camera-input" : "#file-input").click();
+    });
+    openSheet("Add to chat", body);
   });
-  $("#attach-btn").addEventListener("click", () => $("#file-input").click());
-  $("#file-input").addEventListener("change", async (e) => {
-    for (const f of e.target.files) await addAttachment(f);
-    e.target.value = "";
-  });
-
-  // Voice dictation (Chrome on Android ships the Web Speech API).
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (SR) {
-    const mic = $("#mic-btn");
-    mic.hidden = false;
-    let rec = null;
-    mic.addEventListener("click", () => {
-      if (rec) return rec.stop();
-      rec = new SR();
-      rec.lang = navigator.language || "en-US";
-      rec.interimResults = true;
-      rec.continuous = false;
-      const base = ta.value ? ta.value.replace(/\s*$/, " ") : "";
-      rec.onresult = (ev) => {
-        ta.value = base + [...ev.results].map((r) => r[0].transcript).join("");
-        grow();
-      };
-      rec.onend = () => {
-        rec = null;
-        mic.classList.remove("rec");
-        store.set("draft", ta.value);
-      };
-      rec.onerror = (ev) => ev.error !== "no-speech" && toast(`mic: ${ev.error}`, "error");
-      mic.classList.add("rec");
-      buzz(15);
-      rec.start();
+  for (const id of ["#file-input", "#camera-input"]) {
+    $(id).addEventListener("change", async (e) => {
+      for (const f of e.target.files) await addAttachment(f);
+      e.target.value = "";
     });
   }
 }
 
-// Downscale big photos (Pixel camera shots are ~12 MP) before sending them to a model.
+async function stop() {
+  if (!S.current) return;
+  buzz(20);
+  await oc(`/session/${S.current}/abort`, { method: "POST" }).catch((err) => toast(err.message, "error"));
+}
+
+// Voice dictation (Chrome on Android has the Web Speech API).
+function dictate() {
+  if (rec) return rec.stop();
+  const ta = $("#prompt");
+  rec = new SR();
+  rec.lang = navigator.language || "en-US";
+  rec.interimResults = true;
+  const base = ta.value ? ta.value.replace(/\s*$/, " ") : "";
+  rec.onresult = (ev) => {
+    ta.value = base + [...ev.results].map((r) => r[0].transcript).join("");
+    ta.dispatchEvent(new Event("input"));
+  };
+  rec.onend = () => {
+    rec = null;
+    updateSendBtn();
+  };
+  rec.onerror = (ev) => ev.error !== "no-speech" && toast(`Microphone: ${ev.error}`, "error");
+  buzz(15);
+  rec.start();
+  updateSendBtn();
+}
+
+// Shrink big camera photos before sending them to a model.
 async function addAttachment(file) {
   try {
     let url, mime = file.type || "application/octet-stream";
@@ -900,7 +1002,7 @@ async function addAttachment(file) {
       url = c.toDataURL("image/jpeg", 0.85);
       mime = "image/jpeg";
     } else {
-      if (file.size > 10e6) return toast("File too large (10 MB max)", "error");
+      if (file.size > 10e6) return toast("That file is too large (10 MB max)", "error");
       url = await new Promise((res, rej) => {
         const r = new FileReader();
         r.onload = () => res(r.result);
@@ -908,23 +1010,24 @@ async function addAttachment(file) {
         r.readAsDataURL(file);
       });
     }
-    S.attachments.push({ type: "file", mime, url, filename: file.name });
+    S.attachments.push({ type: "file", mime, url, filename: file.name || "photo.jpg" });
     renderAttachments();
   } catch (e) {
-    toast(`Couldn't attach ${file.name}: ${e.message}`, "error");
+    toast(`Couldn't add ${file.name}: ${e.message}`, "error");
   }
 }
 function renderAttachments() {
   const box = $("#attachments");
   box.innerHTML = "";
   S.attachments.forEach((a, i) => {
-    const el = h(`<button type="button" class="att-chip" aria-label="Remove ${esc(a.filename)}">${a.mime.startsWith("image/") ? `<img src="${esc(a.url)}" alt="">` : "📎"}<span>${esc(a.filename)}</span>✕</button>`);
+    const el = h(`<button type="button" class="att-chip" aria-label="Remove ${esc(a.filename)}">${a.mime.startsWith("image/") ? `<img src="${esc(a.url)}" alt="">` : "PDF"}<i>✕</i></button>`);
     el.addEventListener("click", () => {
       S.attachments.splice(i, 1);
       renderAttachments();
     });
     box.append(el);
   });
+  updateSendBtn();
 }
 
 async function send() {
@@ -932,21 +1035,21 @@ async function send() {
   const text = ta.value.trim();
   if (!text && !S.attachments.length) return;
   if (!S.model) {
-    toast("Pick a model first", "error");
+    toast("Choose a model first", "error");
     return openModelPicker();
   }
-  // Slash commands map onto opencode's command endpoint (e.g. /init, /review, custom ones).
-  const cmd = text.match(/^\/(\S+)\s*([\s\S]*)$/);
+  const cmd = text.match(/^\/(\S+)\s*([\s\S]*)$/); // /init, /review, custom commands
   buzz(12);
   const files = S.attachments.splice(0);
   ta.value = "";
   store.set("draft", "");
   ta.dispatchEvent(new Event("input"));
   renderAttachments();
+  ta.blur();
   try {
     if (!S.current) {
       const s = await oc("/session", { method: "POST", body: {} });
-      S.sessions.unshift(s);
+      if (!S.sessions.some((x) => x.id === s.id)) S.sessions.unshift(s);
       S.current = s.id;
       store.set("session", s.id);
       S.msgs.clear();
@@ -954,9 +1057,8 @@ async function send() {
     }
     S.status[S.current] = { type: "busy" };
     updateBusy();
-    const model = `${S.model.providerID}/${S.model.modelID}`;
     if (cmd && !files.length) {
-      oc(`/session/${S.current}/command`, { method: "POST", body: { command: cmd[1], arguments: cmd[2], agent: S.agent, model } }).catch((e) => toast(e.message, "error"));
+      oc(`/session/${S.current}/command`, { method: "POST", body: { command: cmd[1], arguments: cmd[2], agent: S.agent, model: `${S.model.providerID}/${S.model.modelID}` } }).catch((e) => toast(e.message, "error"));
     } else {
       await oc(`/session/${S.current}/prompt_async`, { method: "POST", body: { model: S.model, agent: S.agent, parts: [...(text ? [{ type: "text", text }] : []), ...files] } });
     }
@@ -964,38 +1066,41 @@ async function send() {
   } catch (e) {
     toast(e.message, "error", 6000);
     ta.value = text;
+    ta.dispatchEvent(new Event("input"));
     S.status[S.current] = { type: "idle" };
     updateBusy();
   }
 }
 
-// Android share sheet → "opencode·pixel" (manifest share_target).
+// Android share sheet → opencode (manifest share_target).
 function handleShare() {
   const q = new URLSearchParams(location.search);
   const shared = [q.get("title"), q.get("text"), q.get("url")].filter(Boolean).join("\n");
   if (!shared) return;
-  history.replaceState(null, "", "/");
   newChat();
   $("#prompt").value = shared;
   $("#prompt").dispatchEvent(new Event("input"));
-  goWs(0);
 }
 
-// ── balance ───────────────────────────────────────────────────────────────────────────
+// ── balance page ──────────────────────────────────────────────────────────────────────
 let balTimer = 0;
 function refreshBalancesSoon() {
   clearTimeout(balTimer);
-  balTimer = setTimeout(refreshBalances, 1500);
+  balTimer = setTimeout(() => refreshBalances(), 1500);
 }
 async function refreshBalances(force = false) {
   try {
     S.balances = await api(`/api/balances${force ? "?force=1" : ""}`);
-    $("#wb-spend").textContent = money(S.balances.total.day);
-    renderBalance();
+    renderProfile();
+    if (!$("#page-balance").hidden) renderBalance();
   } catch (e) {
-    $("#balance").innerHTML = `<p class="bad pad">${esc(e.message)}</p>`;
+    if (!$("#page-balance").hidden) $("#balance").innerHTML = `<p class="bad pad">${esc(e.message)}</p>`;
   }
 }
+$("#bal-refresh").addEventListener("click", () => {
+  buzz();
+  refreshBalances(true).then(() => toast("Balances updated"));
+});
 
 const balUi = { q: "", used: store.get("balUsed", false), open: new Set() };
 
@@ -1007,20 +1112,26 @@ function bar(used, cap) {
 function renderBalance() {
   const B = S.balances;
   const root = $("#balance");
-  if (!B) return;
+  if (!B) {
+    root.innerHTML = `<p class="muted pad">Loading…</p>`;
+    return;
+  }
+  const usd = B.providers.filter((p) => Number.isFinite(p.balance.amount) && p.balance.currency === "USD");
+  const totalLeft = usd.reduce((s, p) => s + p.balance.amount, 0);
+
   const prov = B.providers
     .map((p) => {
       const b = p.balance;
-      const src = { live: "live", manual: "tracked", subscription: "plan", none: "no balance api" }[b.source];
-      const amount = b.source === "subscription" ? `<span class="big">plan</span>` : Number.isFinite(b.amount) ? `<span class="big ${b.amount <= 0 ? "bad" : b.amount < 5 ? "warn" : "ok"}">${money(b.amount, b.currency)}</span>` : `<span class="big dim">${b.error ? "error" : "—"}</span>`;
-      const canSet = b.source !== "live";
-      return `<div class="card prov" data-p="${esc(p.id)}">
-        <div class="card-h"><b>${esc(p.name)}</b><span class="badge">${src}</span></div>
+      const tag = { live: ["Live", "live"], manual: ["Tracked", ""], subscription: ["Plan", ""], none: ["Spend only", ""] }[b.source];
+      const amount = b.source === "subscription" ? `<span class="amount">Subscription</span>` : Number.isFinite(b.amount) ? `<span class="amount ${b.amount <= 0 ? "bad" : ""}">${money(b.amount, b.currency)}</span>` : `<span class="amount muted">${b.error ? "Unavailable" : "—"}</span>`;
+      const note = b.error ? `Couldn't check: ${b.error}` : b.detail || (b.source === "none" ? "No balance API — enter your balance to track what's left" : "");
+      return `<div class="prov">
+        <div class="prov-h"><b>${esc(p.name)}</b><span class="tag ${tag[1]}">${tag[0]}</span></div>
         ${amount}
-        <small class="dim">${esc(b.error ? `${b.error}` : b.detail || (b.source === "none" ? "spend is tracked below; set your balance to track what's left" : ""))}</small>
-        <small class="dim">spent: ${money(p.spend?.windows.day || 0)} 24h · ${money(p.spend?.windows.month || 0)} 30d · ${money(p.spend?.cost || 0)} all</small>
-        ${canSet ? `<form class="inline-form" data-set-balance="${esc(p.id)}"><input inputmode="decimal" placeholder="${b.source === "manual" ? "update balance" : "current balance"}" aria-label="Balance for ${esc(p.name)}" /><button class="btn">set</button>${b.source === "manual" ? `<button class="btn ghost" type="button" data-clear-balance="${esc(p.id)}">clear</button>` : ""}</form>` : ""}
-        ${p.id === "opencode" ? `<a class="link" href="https://opencode.ai/console" target="_blank" rel="noopener">top up Zen credits ↗</a>` : ""}
+        ${note ? `<small>${esc(note)}</small>` : ""}
+        <small>Spent ${money(p.spend?.windows.day || 0)} today · ${money(p.spend?.windows.month || 0)} this month</small>
+        ${b.source !== "live" ? `<form class="inline-form" data-set-balance="${esc(p.id)}"><input inputmode="decimal" placeholder="${b.source === "manual" ? "Update balance" : "Current balance"}" aria-label="Balance for ${esc(p.name)}" /><button class="btn">Save</button>${b.source === "manual" ? `<button class="btn ghost" type="button" data-clear-balance="${esc(p.id)}">Clear</button>` : ""}</form>` : ""}
+        ${p.id === "opencode" ? `<a class="small" href="https://opencode.ai/console" target="_blank" rel="noopener">Add credits in the OpenCode console</a>` : ""}
       </div>`;
     })
     .join("");
@@ -1031,66 +1142,58 @@ function renderBalance() {
     .slice(0, 300)
     .map((m) => {
       const open = balUi.open.has(m.key);
-      const left = m.free ? `<b class="ok">free</b>` : m.spendable !== null ? `<b class="${m.spendable <= 0 ? "bad" : m.spendable < 2 ? "warn" : "ok"}">${money(m.spendable, m.currency)}</b>` : `<b class="dim">—</b>`;
-      const tok = m.tokensLeft?.output ? `≈ ${compact(m.tokensLeft.output)} out / ${compact(m.tokensLeft.input)} in tokens left` : m.free ? "no cost" : "set a balance to estimate tokens left";
+      const left = m.free ? `<b class="ok">Free</b>` : Number.isFinite(m.spendable) ? `<b class="${m.spendable <= 0 ? "bad" : ""}">${money(m.spendable, m.currency)}</b>` : `<b class="muted">—</b>`;
+      const sub = m.tokensLeft?.output ? `≈ ${compact(m.tokensLeft.output)} output tokens` : m.free ? "No cost" : m.spend ? `${money(m.spend.windows.month)} this month` : `$${m.cost.input} / $${m.cost.output} per 1M`;
       const lim = m.limits
-        ? `<div class="limits">${["5h", "week", "month"].map((w) => `<div class="lim"><span>${w}</span>${bar(m.limits[w].used, m.limits[w].cap)}<small>${money(m.limits[w].used)} / ${money(m.limits[w].cap)}</small></div>`).join("")}</div>`
+        ? `<div class="limits">${[["5h", "5 hours"], ["week", "Week"], ["month", "Month"]].map(([w, label]) => `<div class="lim"><span>${label}</span>${bar(m.limits[w].used, m.limits[w].cap)}<span>${money(m.limits[w].used)} / ${money(m.limits[w].cap)}</span></div>`).join("")}</div>`
         : "";
       const detail = open
         ? `<div class="m-detail">
-          <div class="kv"><span>price /1M</span><span>in $${m.cost.input} · out $${m.cost.output}${m.cost.cacheRead ? ` · cache $${m.cost.cacheRead}` : ""}</span></div>
-          <div class="kv"><span>context</span><span>${compact(m.context)}</span></div>
-          <div class="kv"><span>spent</span><span>${money(m.spend?.windows["5h"] || 0)} 5h · ${money(m.spend?.windows.day || 0)} 24h · ${money(m.spend?.windows.week || 0)} 7d · ${money(m.spend?.windows.month || 0)} 30d</span></div>
-          <div class="kv"><span>all time</span><span>${money(m.spend?.cost || 0)} · ${m.spend?.requests || 0} replies · ${compact(m.spend?.input || 0)} in · ${compact(m.spend?.output || 0)} out · ${compact(m.spend?.cacheRead || 0)} cached</span></div>
-          <form class="inline-form" data-set-limit="${esc(m.key)}"><input inputmode="decimal" placeholder="monthly $ limit (Go-style)" value="${m.limits ? m.limits.month.cap : ""}" aria-label="Monthly limit" /><button class="btn">set limit</button></form>
-          <small class="dim">A monthly limit also caps 5h at 20 % and weekly at 50 %, like OpenCode Go.</small>
-          <button class="btn ghost" data-use="${esc(m.key)}">use this model</button>
+          <div class="kv"><span>Price / 1M</span><span>${m.cost.input ? `$${m.cost.input} in · $${m.cost.output} out` : "Free"}${m.cost.cacheRead ? ` · $${m.cost.cacheRead} cached` : ""}</span></div>
+          <div class="kv"><span>Context</span><span>${compact(m.context)} tokens</span></div>
+          ${m.tokensLeft?.input ? `<div class="kv"><span>Left</span><span>≈ ${compact(m.tokensLeft.input)} input or ${compact(m.tokensLeft.output)} output tokens</span></div>` : ""}
+          <div class="kv"><span>Spent</span><span>${money(m.spend?.windows["5h"] || 0)} 5h · ${money(m.spend?.windows.day || 0)} today · ${money(m.spend?.windows.week || 0)} week · ${money(m.spend?.windows.month || 0)} month</span></div>
+          <div class="kv"><span>All time</span><span>${money(m.spend?.cost || 0)} · ${m.spend?.requests || 0} replies · ${compact(m.spend?.input || 0)} in · ${compact(m.spend?.output || 0)} out</span></div>
+          <form class="inline-form" data-set-limit="${esc(m.key)}"><input inputmode="decimal" placeholder="Monthly limit ($)" value="${m.limits ? m.limits.month.cap : ""}" aria-label="Monthly limit" /><button class="btn">Set limit</button></form>
+          <small class="muted">A monthly limit also caps 5 hours at 20% and a week at 50%, like OpenCode Go.</small>
+          <button class="btn" data-use="${esc(m.key)}">Use this model</button>
         </div>`
         : "";
-      return `<li class="mrow ${open ? "open" : ""}">
-        <button class="mrow-h" data-toggle="${esc(m.key)}">
-          <span class="m-name"><b>${esc(m.name)}</b><small class="dim">${esc(m.providerName)}${m.status !== "active" ? ` · ${esc(m.status)}` : ""}</small></span>
-          <span class="m-left">${left}<small class="dim">${m.spend ? `${money(m.spend.windows.month)} 30d` : ""}</small></span>
-        </button>
-        <small class="dim m-tok">${tok}</small>${lim}${detail}
-      </li>`;
+      return `<div class="mrow"><button class="mrow-h" data-toggle="${esc(m.key)}" aria-expanded="${open}">
+          <span class="m-name"><b>${esc(m.name)}</b><small>${esc(m.providerName)}${m.status !== "active" ? ` · ${esc(m.status)}` : ""}</small></span>
+          <span class="m-left">${left}<small>${sub}</small></span></button>${lim}${detail}</div>`;
     })
     .join("");
 
   root.innerHTML = `
-    <div class="tiles">
-      <div class="tile"><small>today</small><b>${money(B.total.day)}</b></div>
-      <div class="tile"><small>30 days</small><b>${money(B.total.month)}</b></div>
-      <div class="tile"><small>all time</small><b>${money(B.total.cost)}</b></div>
-      <div class="tile"><small>replies</small><b>${compact(B.total.requests)}</b></div>
-    </div>
-    <div class="section-h"><span>providers</span><button class="btn ghost" id="bal-refresh">↻ refresh</button></div>
-    <div class="cards">${prov || `<p class="dim pad">No providers connected. Connect one in workspace 4.</p>`}</div>
-    <div class="section-h"><span>models · balance left</span></div>
-    <div class="toolbar"><input type="search" id="bal-q" placeholder="filter models…" value="${esc(balUi.q)}" aria-label="Filter models" />
-      <label class="toggle"><input type="checkbox" id="bal-used" ${balUi.used ? "checked" : ""}/> used</label></div>
-    <ul class="list models">${rows || `<li class="empty dim">no models match</li>`}</ul>
-    <p class="dim small pad">“Balance left” is your provider balance (live from the provider API where one exists, otherwise the balance you set minus what opencode spent since), capped by any per-model limit. Token estimates use list price. Updated ${new Date(B.generatedAt).toLocaleTimeString()}.</p>`;
+    <div class="hero"><small>Available across providers</small><span class="big">${usd.length ? money(totalLeft) : "—"}</span><small>${usd.length ? `from ${usd.length} provider${usd.length > 1 ? "s" : ""}` : "Enter a balance below to start tracking"}</small></div>
+    <div class="stats"><div class="stat"><small>Today</small><b>${money(B.total.day)}</b></div><div class="stat"><small>30 days</small><b>${money(B.total.month)}</b></div><div class="stat"><small>All time</small><b>${money(B.total.cost)}</b></div></div>
+    <div class="section">Providers</div>
+    <div class="group">${prov || `<p class="muted pad">No providers connected yet. Add one in Account.</p>`}</div>
+    <div class="section">Balance by model</div>
+    <div class="filters"><input type="search" id="bal-q" placeholder="Search models" value="${esc(balUi.q)}" aria-label="Search models" /><button class="chip-toggle" id="bal-used" aria-pressed="${balUi.used}">Used</button></div>
+    <div class="group">${rows || `<p class="muted pad">No models match</p>`}</div>
+    <p class="muted small pad">Live balances come from the provider. Tracked balances are what you entered minus what opencode has spent since. A model's balance is its provider's, capped by any limit you set. Token counts are estimates at list price. Updated ${new Date(B.generatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.</p>`;
 }
 
 $("#balance").addEventListener("click", async (e) => {
   const t = e.target;
-  if (t.id === "bal-refresh") {
-    t.textContent = "…";
-    buzz();
-    return refreshBalances(true);
-  }
   const tg = t.closest("[data-toggle]");
   if (tg) {
     const k = tg.dataset.toggle;
     balUi.open.has(k) ? balUi.open.delete(k) : balUi.open.add(k);
     return renderBalance();
   }
+  if (t.id === "bal-used") {
+    balUi.used = !balUi.used;
+    store.set("balUsed", balUi.used);
+    return renderBalance();
+  }
   if (t.dataset.use) {
     const [providerID, ...rest] = t.dataset.use.split("/");
     setModel({ providerID, modelID: rest.join("/") });
-    toast("model selected", "ok");
-    return goWs(0);
+    toast("Model selected");
+    return popLayer();
   }
   if (t.dataset.clearBalance) {
     const b = await api("/api/budgets");
@@ -1102,18 +1205,19 @@ $("#balance").addEventListener("click", async (e) => {
 $("#balance").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target;
-  const val = Number(String($("input", f).value).replace(/[$,\s]/g, ""));
+  const raw = $("input", f).value.trim();
+  const val = Number(raw.replace(/[$,\s]/g, ""));
   try {
     const b = await api("/api/budgets");
     if (f.dataset.setBalance) {
-      if (!Number.isFinite(val)) throw new Error("Enter a number");
+      if (!raw || !Number.isFinite(val)) throw new Error("Enter an amount, like 25.00");
       b.providers[f.dataset.setBalance] = { balance: val, currency: "USD", asOf: Date.now() };
     } else if (f.dataset.setLimit) {
-      if (!$("input", f).value.trim() || val <= 0) delete b.limits[f.dataset.setLimit];
+      if (!raw || val <= 0) delete b.limits[f.dataset.setLimit];
       else b.limits[f.dataset.setLimit] = { monthly: val };
     }
     await api("/api/budgets", { method: "PUT", body: b });
-    toast("saved", "ok");
+    toast("Saved");
     buzz();
     refreshBalances();
   } catch (err) {
@@ -1121,96 +1225,93 @@ $("#balance").addEventListener("submit", async (e) => {
   }
 });
 $("#balance").addEventListener("input", (e) => {
-  if (e.target.id === "bal-q") {
-    balUi.q = e.target.value;
-    clearTimeout(balTimer);
-    balTimer = setTimeout(() => {
-      renderBalance();
-      const q = $("#bal-q");
-      q.focus();
-      q.setSelectionRange(q.value.length, q.value.length);
-    }, 200);
-  }
-  if (e.target.id === "bal-used") {
-    balUi.used = e.target.checked;
-    store.set("balUsed", balUi.used);
+  if (e.target.id !== "bal-q") return;
+  balUi.q = e.target.value;
+  clearTimeout(balTimer);
+  balTimer = setTimeout(() => {
     renderBalance();
-  }
+    const q = $("#bal-q");
+    q.focus();
+    q.setSelectionRange(q.value.length, q.value.length);
+  }, 200);
 });
 
-// ── account ───────────────────────────────────────────────────────────────────────────
+// ── account page ──────────────────────────────────────────────────────────────────────
 async function renderAccount() {
   const root = $("#account");
+  if (!S.accounts) root.innerHTML = `<p class="muted pad">Loading…</p>`;
   try {
     [S.me, S.accounts] = await Promise.all([api("/api/me"), api("/api/accounts")]);
   } catch (e) {
     root.innerHTML = `<p class="bad pad">${esc(e.message)}</p>`;
     return;
   }
+  renderProfile();
   const me = S.me;
   const B = S.balances;
-  const nModels = S.providers.reduce((n, p) => n + Object.keys(p.models || {}).length, 0);
-  const lines = [
-    ["user", `${me.user.name}@opencode`],
-    ["login", `since ${new Date(me.user.since).toLocaleDateString()}`],
-    ["expires", new Date(me.user.expires).toLocaleDateString()],
-    ["server", me.opencode.url],
-    ["status", me.opencode.reachable ? "● online" : `○ offline (${me.opencode.error || "?"})`],
-    ["project", me.opencode.worktree || "—"],
-    ["providers", `${S.accounts.accounts.filter((a) => a.connected).length} connected`],
-    ["models", String(nModels)],
-    ["spent", B ? `${money(B.total.month)} 30d · ${money(B.total.cost)} total` : "…"],
-    ["theme", THEMES[prefs.theme]?.name],
-    ["bridge", `v${me.bridge.version}${me.bridge.demo ? " (demo)" : ""}`],
-  ];
-  const art = ["  ▄▄▄▄▄▄▄  ", " █ ▄▄▄▄▄ █ ", " █ █   █ █ ", " █ █▄▄▄█ █ ", " █▄▄▄▄▄▄▄█ ", "   ▀▀▀▀▀   "];
   const accs = S.accounts.accounts
-    .map(
-      (a) => `<li class="row acc"><div class="row-main static"><span class="row-title"><i class="dot ${a.connected ? "on" : ""}"></i>${esc(a.name)}</span>
-        <small class="dim">${esc(a.type === "oauth" ? `oauth · ${a.expires ? (a.expires > Date.now() ? `token refreshes ${ago(a.expires) === "now" ? "soon" : new Date(a.expires).toLocaleString()}` : "token expired — opencode refreshes it on next use") : "signed in"}` : a.type === "env" ? "from environment variable" : `${a.type} key ${a.hint || ""}`)}</small></div>
-        <button class="btn ghost" data-connect="${esc(a.id)}">${a.connected ? "re-auth" : "connect"}</button></li>`,
-    )
+    .map((a) => {
+      const how = a.type === "oauth" ? (a.expires && a.expires < Date.now() ? "Signed in · refreshes on next use" : "Signed in with your account") : a.type === "env" ? "Key from an environment variable" : `API key ${a.hint || ""}`;
+      return `<div class="row"><span class="dot ${a.connected ? "on" : ""}"></span><span class="row-main"><b>${esc(a.name)}</b><small>${esc(how)}</small></span><button class="btn" data-connect="${esc(a.id)}">${a.connected ? "Manage" : "Connect"}</button></div>`;
+    })
     .join("");
+  const info = [
+    ["Server", me.opencode.url],
+    ["Status", me.opencode.reachable ? "Connected" : `Offline (${me.opencode.error || "unknown"})`],
+    ["Project", me.opencode.worktree || "—"],
+    ["Signed in", new Date(me.user.since).toLocaleDateString()],
+    ["Session ends", new Date(me.user.expires).toLocaleDateString()],
+    ["App version", `${me.bridge.version}${me.bridge.demo ? " (demo)" : ""}`],
+  ];
   root.innerHTML = `
-    <div class="fetch"><pre class="fetch-art" aria-hidden="true">${art.join("\n")}</pre>
-      <div class="fetch-info"><b class="accent">${esc(me.user.name)}</b><span class="dim">@</span><b class="accent">opencode·pixel</b><div class="dim">${"─".repeat(22)}</div>
-      ${lines.map(([k, v]) => `<div><span class="k">${k}</span> ${esc(v)}</div>`).join("")}
-      <div class="swatch">${["red", "green", "yellow", "accent", "purple", "cyan", "fg"].map((c) => `<i style="background:var(--${c})"></i>`).join("")}</div></div></div>
-    <div class="section-h"><span>provider logins</span><button class="btn primary" id="connect-new">+ connect</button></div>
-    <ul class="list">${accs || `<li class="empty dim">No providers yet. Tap “connect” to log in to OpenCode Zen, Anthropic, OpenAI, OpenRouter…</li>`}</ul>
-    ${me.bridge.authFileFound || me.bridge.demo ? "" : `<p class="dim small pad">Couldn't read ${esc(me.bridge.authFile)} — key hints and live balances need the bridge on the same machine as opencode (or set OPENCODE_AUTH_FILE).</p>`}
-    <div class="section-h"><span>session</span></div>
-    <div class="pad stack">
-      <a class="btn" href="https://opencode.ai/console" target="_blank" rel="noopener">OpenCode console (Zen billing) ↗</a>
-      <button class="btn danger" id="logout">log out of this phone</button>
-    </div>`;
+    <div class="profile-card"><span class="avatar big">${esc(me.user.name[0])}</span><h2>${esc(me.user.name)}</h2>
+      <small class="muted">${B ? `${money(B.total.month)} spent this month · ${money(B.total.cost)} all time` : ""}</small></div>
+    <div class="section"><span>Model providers</span><button class="btn ghost" id="connect-new">Add</button></div>
+    <div class="group">${accs || `<p class="muted pad">No providers yet. Tap Add to sign in to OpenCode Zen, Anthropic, OpenAI, GitHub Copilot, OpenRouter and more.</p>`}</div>
+    ${me.bridge.authFileFound || me.bridge.demo ? "" : `<p class="muted small pad">Couldn't read ${esc(me.bridge.authFile)}. Live balances and key hints need the bridge on the same computer as opencode (or set OPENCODE_AUTH_FILE).</p>`}
+    <div class="section">opencode</div>
+    <div class="group">${info.map(([k, v]) => `<div class="row"><span class="row-main"><small>${k}</small><span>${esc(v)}</span></span></div>`).join("")}</div>
+    <div class="section">Billing</div>
+    <div class="group">
+      <button class="row" data-goto="balance"><span class="nav-ico">${I.wallet}</span><span class="row-main"><span>Balance & usage</span></span>${I.right}</button>
+      <a class="row" style="text-decoration:none;color:inherit" href="https://opencode.ai/console" target="_blank" rel="noopener"><span class="nav-ico">${I.globe}</span><span class="row-main"><span>OpenCode console</span><small>Credits, invoices, Go plan</small></span>${I.right}</a>
+    </div>
+    <div class="section"></div>
+    <div class="group"><button class="row bad" id="logout"><span class="nav-ico bad">${I.logout}</span><span class="row-main"><span>Log out</span></span></button></div>`;
   $("#connect-new").addEventListener("click", () => connectFlow());
   $$("[data-connect]", root).forEach((b) => b.addEventListener("click", () => connectFlow(b.dataset.connect)));
+  $("[data-goto]", root).addEventListener("click", () => {
+    popLayer();
+    setTimeout(() => openPage("balance"), 220);
+  });
   $("#logout").addEventListener("click", async () => {
+    if (!confirm("Log out of opencode on this phone?")) return;
     await api("/api/logout", { method: "POST" }).catch(() => {});
+    while (layers.length) layers.pop().close(true);
     showLogin();
   });
 }
 
-// Log in to a model provider through opencode (OAuth or API key), from the phone.
+// Sign in to a model provider through opencode (OAuth or API key), from the phone.
 function connectFlow(providerID) {
   const avail = S.accounts?.available || [];
-  const body = h(`<div class="picker"><input type="search" class="picker-q" placeholder="search providers…" aria-label="Search providers" /><div class="picker-list"></div></div>`);
-  const list = $(".picker-list", body);
+  const body = h(`<div><input type="search" placeholder="Search providers" aria-label="Search providers" /><div class="list"></div></div>`);
+  const list = $(".list", body);
+  const search = $("input", body);
   const choose = (p) => {
+    search.hidden = true;
+    $("#sheet-label").textContent = `Connect ${p.name}`;
     list.innerHTML = "";
-    $(".picker-q", body).hidden = true;
-    list.append(h(`<p class="pad"><b>${esc(p.name)}</b> — how do you want to sign in?</p>`));
     p.methods.forEach((m, idx) => {
-      const b = h(`<button class="pick"><span class="pick-main"><b>${esc(m.label)}</b><small class="dim">${m.type === "oauth" ? "opens the provider's sign-in page" : "paste an API key"}</small></span><span class="pick-side">›</span></button>`);
+      const b = h(`<button class="pick"><span class="nav-ico">${m.type === "oauth" ? I.user : I.key}</span><span class="pick-main"><b>${esc(m.label)}</b><small>${m.type === "oauth" ? "Sign in on the provider's website" : "Paste an API key"}</small></span>${I.right}</button>`);
       b.addEventListener("click", () => (m.type === "oauth" ? oauth(p, idx) : apiKey(p)));
       list.append(b);
     });
   };
   const apiKey = (p) => {
     list.innerHTML = "";
-    const f = h(`<form class="stack pad"><p><b>${esc(p.name)}</b> API key</p><input type="password" autocomplete="off" placeholder="sk-…" required aria-label="API key" />
-      <small class="dim">Sent once to your opencode server (stored in its auth.json). It never stays on the phone.</small><button class="btn primary">save key</button></form>`);
+    const f = h(`<form class="stack" style="padding:4px 8px"><input type="password" autocomplete="off" placeholder="API key" required aria-label="API key" />
+      <small class="muted">Sent once to your opencode server and stored there. It isn't kept on this phone.</small><button class="btn accent">Save key</button></form>`);
     f.addEventListener("submit", async (e) => {
       e.preventDefault();
       try {
@@ -1224,13 +1325,13 @@ function connectFlow(providerID) {
     $("input", f).focus();
   };
   const oauth = async (p, method) => {
-    list.innerHTML = `<p class="pad"><span class="spin"></span> starting sign-in…</p>`;
+    list.innerHTML = `<p class="pad muted"><i class="spin"></i> Starting sign-in…</p>`;
     try {
       const a = await oc(`/provider/${encodeURIComponent(p.id)}/oauth/authorize`, { method: "POST", body: { method } });
       list.innerHTML = "";
-      const f = h(`<form class="stack pad"><p><b>${esc(p.name)}</b></p><a class="btn primary" href="${esc(a.url)}" target="_blank" rel="noopener">open sign-in page ↗</a>
-        ${a.instructions ? `<p class="dim">${esc(a.instructions)}</p>` : ""}
-        ${a.method === "code" ? `<input placeholder="paste the code here" autocomplete="off" required aria-label="Authorization code" /><button class="btn">finish</button>` : `<p class="dim"><span class="spin"></span> waiting for you to finish in the browser…</p>`}</form>`);
+      const f = h(`<form class="stack" style="padding:4px 8px"><a class="btn accent block" href="${esc(a.url)}" target="_blank" rel="noopener">Continue to ${esc(p.name)}</a>
+        ${a.instructions ? `<p class="muted small" style="margin:0">${esc(a.instructions)}</p>` : ""}
+        ${a.method === "code" ? `<input placeholder="Paste the code here" autocomplete="off" required aria-label="Authorization code" /><button class="btn primary">Finish</button>` : `<p class="muted small"><i class="spin"></i> Waiting for you to finish signing in…</p>`}</form>`);
       list.append(f);
       if (a.method === "code") {
         f.addEventListener("submit", async (e) => {
@@ -1251,87 +1352,84 @@ function connectFlow(providerID) {
     }
   };
   const done = (p) => {
-    toast(`${p.name} connected`, "ok");
+    toast(`${p.name} connected`);
     buzz([10, 40, 10]);
     closeSheet();
     renderAccount();
     loadModels();
     refreshBalances(true);
   };
+  const popular = ["opencode", "anthropic", "openai", "github-copilot", "openrouter", "google", "deepseek", "xai", "groq"];
   const draw = (q = "") => {
     list.innerHTML = "";
     q = q.toLowerCase();
-    const popular = ["opencode", "anthropic", "openai", "github-copilot", "openrouter", "google", "deepseek", "xai", "groq"];
-    const items = avail.filter((p) => !q || `${p.name} ${p.id}`.toLowerCase().includes(q)).sort((a, b) => ((popular.indexOf(a.id) + 1 || 99) - (popular.indexOf(b.id) + 1 || 99)) || a.name.localeCompare(b.name));
+    const items = avail.filter((p) => !q || `${p.name} ${p.id}`.toLowerCase().includes(q)).sort((a, b) => (popular.indexOf(a.id) + 1 || 99) - (popular.indexOf(b.id) + 1 || 99) || a.name.localeCompare(b.name));
     for (const p of items.slice(0, 80)) {
-      const b = h(`<button class="pick"><span class="pick-main"><b>${esc(p.name)}</b><small class="dim">${esc(p.id)}${p.methods.some((m) => m.type === "oauth") ? " · sign-in available" : ""}</small></span><span class="pick-side">›</span></button>`);
+      const b = h(`<button class="pick"><span class="pick-main"><b>${esc(p.name)}</b><small>${p.methods.some((m) => m.type === "oauth") ? "Sign in or API key" : "API key"}</small></span>${I.right}</button>`);
       b.addEventListener("click", () => choose(p));
       list.append(b);
     }
-    if (!items.length) list.append(h(`<p class="dim pad">no match</p>`));
+    if (!items.length) list.append(h(`<p class="muted pad">No match</p>`));
   };
-  $(".picker-q", body).addEventListener("input", (e) => draw(e.target.value));
+  search.addEventListener("input", (e) => draw(e.target.value));
   const pre = providerID && avail.find((p) => p.id === providerID);
-  openSheet("connect provider", body);
+  openSheet("Add a provider", body);
   pre ? choose(pre) : draw();
 }
 
-// ── settings ──────────────────────────────────────────────────────────────────────────
+// ── settings page ─────────────────────────────────────────────────────────────────────
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", (e) => {
   e.preventDefault();
   installEvt = e;
-  renderSettings();
+  if (!$("#page-settings").hidden) renderSettings();
 });
 
 function renderSettings() {
   const root = $("#settings");
-  const sw = Object.entries(THEMES)
-    .map(([id, t]) => `<button class="theme ${prefs.theme === id ? "sel" : ""}" data-theme="${id}" style="--t-bg:${t.bg};--t-fg:${t.fg};--t-a:${t.accent};--t-b:${t.surface}"><span class="tp"><i style="background:${t.red}"></i><i style="background:${t.green}"></i><i style="background:${t.yellow}"></i><i style="background:${t.accent}"></i><i style="background:${t.purple}"></i></span><span>${esc(t.name)}</span></button>`)
-    .join("");
-  const tog = (k, label, hint = "") => `<label class="switch"><span><b>${label}</b>${hint ? `<small class="dim">${hint}</small>` : ""}</span><input type="checkbox" data-pref="${k}" ${prefs[k] ? "checked" : ""}/><i></i></label>`;
+  const tog = (k, label, hint = "") => `<label class="switch"><span class="row-main"><span>${label}</span>${hint ? `<small>${hint}</small>` : ""}</span><input type="checkbox" data-pref="${k}" ${prefs[k] ? "checked" : ""}/><i></i></label>`;
+  const installed = matchMedia("(display-mode: standalone)").matches;
   root.innerHTML = `
-    <div class="section-h"><span>theme</span></div>
-    <div class="themes">${sw}</div>
-    <div class="section-h"><span>text size · ${Math.round(prefs.fontScale * 100)}%</span></div>
-    <div class="pad"><input type="range" min="0.85" max="1.3" step="0.05" value="${prefs.fontScale}" id="scale" aria-label="Text size" /></div>
-    <div class="section-h"><span>behaviour</span></div>
-    <div class="switches">
-      ${tog("haptics", "haptics", "small vibrations on taps")}
-      ${tog("notify", "notify when done", "when a reply finishes while the app is in the background")}
-      ${tog("wakeLock", "keep screen on", "while opencode is working")}
-      ${tog("enterSends", "enter sends", "otherwise enter = newline, use the send button")}
-      ${tog("showReasoning", "show thinking", "model reasoning blocks")}
+    <div class="section">Appearance</div>
+    <div class="seg" role="group" aria-label="Appearance">${["system", "light", "dark"].map((m) => `<button data-appearance="${m}" aria-pressed="${prefs.appearance === m}">${m[0].toUpperCase() + m.slice(1)}</button>`).join("")}</div>
+    <div class="section"><span>Text size</span><span id="scale-val">${Math.round(prefs.fontScale * 100)}%</span></div>
+    <div class="group" style="padding:4px 14px"><input type="range" min="0.85" max="1.3" step="0.05" value="${prefs.fontScale}" id="scale" aria-label="Text size" /></div>
+    <div class="section">Chat</div>
+    <div class="group">
+      ${tog("showReasoning", "Show thinking", "See the model's reasoning steps")}
+      ${tog("enterSends", "Enter to send", "Otherwise Enter adds a new line")}
+      ${tog("notify", "Notify when done", "When a reply finishes while the app is closed")}
+      ${tog("wakeLock", "Keep screen on", "While opencode is working")}
+      ${tog("haptics", "Haptic feedback")}
     </div>
-    <div class="section-h"><span>app</span></div>
-    <div class="pad stack">
-      ${installEvt ? `<button class="btn primary" id="install">install on home screen</button>` : matchMedia("(display-mode: standalone)").matches ? `<p class="dim">installed ✓</p>` : `<p class="dim">To install: Chrome menu ⋮ → “Add to Home screen” → Install.</p>`}
-      <button class="btn" id="reload-oc">reload opencode (picks up new logins/config)</button>
-      <button class="btn ghost" id="clear-cache">clear app cache</button>
-      <p class="dim small">shortcuts with a keyboard: Ctrl+K launcher · Alt+1…5 workspaces · Ctrl+Enter send</p>
-    </div>`;
+    <div class="section">App</div>
+    <div class="group">
+      ${installEvt ? `<button class="row" id="install"><span class="row-main"><span>Install app</span><small>Add opencode to your home screen</small></span>${I.right}</button>` : `<div class="row"><span class="row-main"><span>${installed ? "Installed" : "Install app"}</span><small>${installed ? "Running as an app" : "Chrome menu ⋮ → Add to Home screen"}</small></span></div>`}
+      <button class="row" id="reload-oc"><span class="row-main"><span>Reload opencode</span><small>Picks up new sign-ins and config</small></span>${I.right}</button>
+      <button class="row" id="clear-cache"><span class="row-main"><span>Clear app cache</span></span>${I.right}</button>
+    </div>
+    <p class="muted small pad">opencode·pixel ${esc(S.me?.bridge?.version || "")} · with a keyboard: Ctrl+Enter sends</p>`;
 }
 
 $("#settings").addEventListener("click", async (e) => {
   const t = e.target.closest("button");
   if (!t) return;
-  if (t.dataset.theme) {
-    prefs.theme = t.dataset.theme;
+  if (t.dataset.appearance) {
+    prefs.appearance = t.dataset.appearance;
     savePrefs();
-    applyTheme(prefs.theme);
+    applyAppearance(prefs.appearance);
     buzz();
     renderSettings();
-    toast(`theme: ${THEMES[prefs.theme].name}`);
   } else if (t.id === "install" && installEvt) {
     installEvt.prompt();
     await installEvt.userChoice;
     installEvt = null;
     renderSettings();
   } else if (t.id === "reload-oc") {
-    if (!confirm("Reload the opencode instance? Running replies will stop.")) return;
+    if (!confirm("Reload opencode? Any reply in progress will stop.")) return;
     await oc("/instance/dispose", { method: "POST" }).catch((err) => toast(err.message, "error"));
     setTimeout(loadAll, 800);
-    toast("opencode reloaded", "ok");
+    toast("opencode reloaded");
   } else if (t.id === "clear-cache") {
     for (const k of (await caches?.keys?.()) || []) await caches.delete(k);
     (await navigator.serviceWorker?.getRegistration())?.unregister();
@@ -1340,137 +1438,29 @@ $("#settings").addEventListener("click", async (e) => {
 });
 $("#settings").addEventListener("change", async (e) => {
   const k = e.target.dataset.pref;
-  if (k) {
-    prefs[k] = e.target.checked;
-    if (k === "notify" && prefs.notify && "Notification" in window && Notification.permission !== "granted") {
-      prefs.notify = (await Notification.requestPermission()) === "granted";
-      e.target.checked = prefs.notify;
-    }
-    savePrefs();
-    buzz();
-    if (k === "showReasoning") renderChat();
+  if (!k) return;
+  prefs[k] = e.target.checked;
+  if (k === "notify" && prefs.notify && "Notification" in window && Notification.permission !== "granted") {
+    prefs.notify = (await Notification.requestPermission()) === "granted";
+    e.target.checked = prefs.notify;
   }
+  savePrefs();
+  buzz();
+  if (k === "showReasoning") renderChat();
 });
 $("#settings").addEventListener("input", (e) => {
-  if (e.target.id === "scale") {
-    prefs.fontScale = Number(e.target.value);
-    document.documentElement.style.setProperty("--scale", prefs.fontScale);
-    $("#settings .section-h:nth-of-type(2) span").textContent = `text size · ${Math.round(prefs.fontScale * 100)}%`;
-    savePrefs();
-  }
+  if (e.target.id !== "scale") return;
+  prefs.fontScale = Number(e.target.value);
+  document.documentElement.style.setProperty("--scale", prefs.fontScale);
+  $("#scale-val").textContent = `${Math.round(prefs.fontScale * 100)}%`;
+  savePrefs();
 });
-
-// ── sheet ─────────────────────────────────────────────────────────────────────────────
-function initSheet() {
-  $("#sheet").addEventListener("click", (e) => e.target.id === "sheet" && closeSheet());
-  // drag the grip down to dismiss
-  let y0 = null;
-  const sheet = $("#sheet .sheet");
-  $(".sheet-grip").addEventListener("touchstart", (e) => (y0 = e.touches[0].clientY), { passive: true });
-  $(".sheet-grip").addEventListener("touchmove", (e) => y0 !== null && (sheet.style.transform = `translateY(${Math.max(0, e.touches[0].clientY - y0)}px)`), { passive: true });
-  $(".sheet-grip").addEventListener("touchend", (e) => {
-    const dy = e.changedTouches[0].clientY - y0;
-    y0 = null;
-    sheet.style.transform = "";
-    if (dy > 80) closeSheet();
-  });
-}
-function openSheet(label, body) {
-  $("#sheet-label").textContent = label;
-  $("#sheet-body").replaceChildren(body);
-  $("#sheet").hidden = false;
-  history.pushState({ overlay: "sheet" }, "");
-  setTimeout(() => $("input:not([type=hidden])", body)?.focus({ preventScroll: true }), 50);
-}
-function closeSheet(fromPop = false) {
-  if ($("#sheet").hidden) return;
-  $("#sheet").hidden = true;
-  $("#sheet-body").replaceChildren();
-  if (!fromPop && history.state?.overlay) history.back();
-}
-
-// Android back gesture closes overlays instead of leaving the app.
-window.addEventListener("popstate", () => {
-  closeSheet(true);
-  closeWalker(true);
-});
-
-// ── walker (launcher) ─────────────────────────────────────────────────────────────────
-let walkerSel = 0;
-function walkerItems(q) {
-  const items = [
-    { icon: "+", label: "new session", run: () => (newChat(), goWs(0)) },
-    { icon: "◇", label: "pick model", run: () => openModelPicker() },
-    { icon: "$", label: "balance per model", run: () => goWs(2) },
-    { icon: "↻", label: "refresh balances", run: () => (refreshBalances(true), goWs(2)) },
-    { icon: "⚿", label: "connect provider", run: () => (goWs(3), S.accounts ? connectFlow() : renderAccount().then(() => connectFlow())) },
-    { icon: "⇄", label: `switch agent (${S.agent})`, run: () => $("#agent-chip").click() },
-    ...WORKSPACES.map((w, i) => ({ icon: String(w.n), label: `workspace ${w.n} · ${w.label}`, run: () => goWs(i) })),
-    ...Object.entries(THEMES).map(([id, t]) => ({ icon: "◐", label: `theme: ${t.name}`, run: () => ((prefs.theme = id), savePrefs(), applyTheme(id), renderSettings()) })),
-    ...S.sessions.slice(0, 50).map((s) => ({ icon: "›", label: s.title, hint: ago(s.time.updated), run: () => (openSession(s.id), goWs(0)) })),
-    { icon: "⏻", label: "log out", run: () => api("/api/logout", { method: "POST" }).finally(showLogin) },
-  ];
-  if (!q) return items.slice(0, 12 + Math.min(8, S.sessions.length));
-  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  return items.filter((it) => words.every((w) => it.label.toLowerCase().includes(w)));
-}
-function drawWalker() {
-  const items = walkerItems($("#walker-q").value.trim());
-  walkerSel = Math.min(walkerSel, Math.max(0, items.length - 1));
-  const ul = $("#walker-list");
-  ul.innerHTML = "";
-  items.forEach((it, i) => {
-    const li = h(`<li><button class="${i === walkerSel ? "sel" : ""}"><span class="w-icon">${esc(it.icon)}</span><span class="w-label">${esc(it.label)}</span>${it.hint ? `<small class="dim">${esc(it.hint)}</small>` : ""}</button></li>`);
-    li.firstChild.addEventListener("click", () => {
-      closeWalker();
-      it.run();
-    });
-    ul.append(li);
-  });
-  ul._items = items;
-}
-function initWalker() {
-  $("#walker").addEventListener("click", (e) => e.target.id === "walker" && closeWalker());
-  $("#walker-q").addEventListener("input", () => {
-    walkerSel = 0;
-    drawWalker();
-  });
-  $("#walker-q").addEventListener("keydown", (e) => {
-    const items = $("#walker-list")._items || [];
-    if (e.key === "ArrowDown") walkerSel = Math.min(items.length - 1, walkerSel + 1);
-    else if (e.key === "ArrowUp") walkerSel = Math.max(0, walkerSel - 1);
-    else if (e.key === "Enter" && items[walkerSel]) {
-      closeWalker();
-      return items[walkerSel].run();
-    } else return;
-    e.preventDefault();
-    drawWalker();
-  });
-}
-function openWalker() {
-  if (!$("#walker").hidden) return closeWalker();
-  $("#walker-q").value = "";
-  walkerSel = 0;
-  drawWalker();
-  $("#walker").hidden = false;
-  history.pushState({ overlay: "walker" }, "");
-  buzz();
-  setTimeout(() => $("#walker-q").focus(), 30);
-}
-function closeWalker(fromPop = false) {
-  if ($("#walker").hidden) return;
-  $("#walker").hidden = true;
-  if (!fromPop && history.state?.overlay) history.back();
-}
 
 // ── service worker ────────────────────────────────────────────────────────────────────
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
   navigator.serviceWorker.addEventListener("message", (e) => {
-    if (e.data?.type === "open-session" && e.data.sessionID) {
-      openSession(e.data.sessionID);
-      goWs(0);
-    }
+    if (e.data?.type === "open-session" && e.data.sessionID) openSession(e.data.sessionID);
   });
 }
 

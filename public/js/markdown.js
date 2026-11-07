@@ -34,7 +34,7 @@ export function markdown(src) {
       while (i < lines.length && !lines[i].trim().startsWith(fence[1])) body.push(lines[i++]);
       i++;
       const lang = esc(fence[2] || "");
-      out.push(`<div class="code"><div class="code-bar"><span>${lang || "text"}</span><button type="button" class="copy" data-copy>copy</button></div><pre><code>${esc(body.join("\n"))}</code></pre></div>`);
+      out.push(`<div class="code"><div class="code-bar"><span>${lang || "text"}</span><button type="button" class="copy" data-copy>Copy</button></div><pre><code>${esc(body.join("\n"))}</code></pre></div>`);
       continue;
     }
     let m;
