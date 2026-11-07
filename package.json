@@ -1,0 +1,17 @@
+{
+  "name": "opencode-pixel",
+  "version": "0.2.0",
+  "private": true,
+  "description": "A standalone AI chat app for the Pixel 9: talks to model providers directly from your phone and shows your balance in tokens.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "for f in android/app/src/main/assets/web/app.js android/app/src/main/assets/web/js/*.js scripts/*.mjs; do node --check \"$f\" || exit 1; done && node --test test/*.test.js",
+    "catalog": "node scripts/update-catalog.mjs",
+    "preview": "node scripts/preview.mjs"
+  }
+}

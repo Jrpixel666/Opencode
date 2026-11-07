@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new_chat"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_new">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="io.github.jrpixel666.opencodepixel"
+            android:targetClass="io.github.jrpixel666.opencodepixel.MainActivity"
+            android:data="ocp://open/?new=1" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="tokens"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_tokens">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="io.github.jrpixel666.opencodepixel"
+            android:targetClass="io.github.jrpixel666.opencodepixel.MainActivity"
+            android:data="ocp://open/?page=tokens" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="providers"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_providers">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="io.github.jrpixel666.opencodepixel"
+            android:targetClass="io.github.jrpixel666.opencodepixel.MainActivity"
+            android:data="ocp://open/?page=providers" />
+    </shortcut>
+</shortcuts>

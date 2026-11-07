@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#FAF9F5" />
+    <meta name="color-scheme" content="light dark" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https: http:; base-uri 'none'; form-action 'none'" />
+    <title>opencode</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn" aria-label="Open menu"></button>
+        <button class="title-btn" id="title-btn" aria-label="Chat options"><span id="chat-title">New chat</span><span id="title-chev"></span></button>
+        <button class="icon-btn" id="new-btn" aria-label="New chat"></button>
+      </header>
+
+      <main class="chat" id="chat">
+        <div class="chat-log" id="chat-log" aria-live="polite"></div>
+        <button class="jump" id="jump" hidden aria-label="Scroll to latest"></button>
+      </main>
+
+      <div class="dock">
+        <form class="composer" id="composer">
+          <div id="attachments" class="attachments"></div>
+          <textarea id="prompt" rows="1" placeholder="How can I help you today?" enterkeyhint="send" autocomplete="off"></textarea>
+          <div class="composer-row">
+            <button type="button" class="round-btn" id="attach-btn" aria-label="Add photos"></button>
+            <span class="grow"></span>
+            <button type="button" class="model-btn" id="model-chip" aria-label="Choose model"></button>
+            <button type="submit" class="send-btn" id="send-btn" aria-label="Send"></button>
+          </div>
+          <input type="file" id="file-input" accept="image/*" multiple hidden />
+          <input type="file" id="camera-input" accept="image/*" capture="environment" hidden />
+        </form>
+      </div>
+    </div>
+
+    <!-- ── navigation drawer ───────────────────────────────────── -->
+    <div id="scrim" class="scrim" hidden></div>
+    <aside id="drawer" class="drawer" aria-label="Menu" inert>
+      <div class="drawer-head"><span id="drawer-mark"></span><span class="wordmark serif">opencode</span></div>
+      <nav class="drawer-nav">
+        <button class="nav-item accent" id="nav-new"><span class="nav-ico" data-i="plus"></span>New chat</button>
+        <button class="nav-item" data-page="tokens"><span class="nav-ico" data-i="gauge"></span>Tokens<small class="nav-meta" id="nav-tokens"></small></button>
+        <button class="nav-item" data-page="providers"><span class="nav-ico" data-i="key"></span>Providers<small class="nav-meta" id="nav-providers"></small></button>
+      </nav>
+      <div class="drawer-search"><span data-i="search"></span><input type="search" id="chat-filter" placeholder="Search chats" aria-label="Search chats" /></div>
+      <div class="drawer-label">Recents</div>
+      <ul class="recents" id="recents"></ul>
+      <button class="profile" data-page="settings">
+        <span class="avatar" id="avatar"></span>
+        <span class="profile-text"><b id="profile-name"></b><small class="muted" id="profile-sub"></small></span>
+        <span data-i="gear" class="muted"></span>
+      </button>
+    </aside>
+
+    <!-- ── full-screen pages ───────────────────────────────────── -->
+    <section class="page" id="page-tokens" hidden>
+      <header class="pagebar"><button class="icon-btn back" aria-label="Back"></button><h1>Tokens</h1><button class="icon-btn" id="tok-refresh" aria-label="Refresh balances"></button></header>
+      <div class="page-body" id="tokens"></div>
+    </section>
+    <section class="page" id="page-providers" hidden>
+      <header class="pagebar"><button class="icon-btn back" aria-label="Back"></button><h1>Providers</h1><span class="icon-btn"></span></header>
+      <div class="page-body" id="providers"></div>
+    </section>
+    <section class="page" id="page-settings" hidden>
+      <header class="pagebar"><button class="icon-btn back" aria-label="Back"></button><h1>Settings</h1><span class="icon-btn"></span></header>
+      <div class="page-body" id="settings"></div>
+    </section>
+
+    <!-- ── bottom sheet ────────────────────────────────────────── -->
+    <div id="sheet" class="sheet-wrap" hidden>
+      <div class="sheet" role="dialog" aria-labelledby="sheet-label">
+        <div class="sheet-grip" aria-hidden="true"></div>
+        <h2 class="sheet-title" id="sheet-label"></h2>
+        <div id="sheet-body" class="sheet-body"></div>
+      </div>
+    </div>
+
+    <input type="file" id="import-input" accept="application/json,.json" hidden />
+    <div id="toasts" aria-live="polite"></div>
+  </body>
+</html>
