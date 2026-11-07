@@ -49,8 +49,7 @@ jobs:
         run: |
           V=${{ steps.s.outputs.version }}
           mkdir -p dist
-          git archive --format=zip --prefix="opencode-pixel-$V/" -o "dist/opencode-pixel-$V.zip" HEAD
-          git archive --format=tar.gz --prefix="opencode-pixel-$V/" -o "dist/opencode-pixel-$V.tar.gz" HEAD
+          git archive --format=zip --prefix="opencode-pixel-$V/" -o "dist/opencode-pixel-$V-source.zip" HEAD
           (cd dist && sha256sum * > SHA256SUMS.txt)
           awk -v v="$V" '$0 ~ "^## \\[?"v"\\]?" {on=1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
           [ -s notes.md ] || echo "Release $V" > notes.md

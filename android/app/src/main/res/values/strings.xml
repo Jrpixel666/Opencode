@@ -2,9 +2,9 @@
 <resources>
     <string name="app_name">opencode</string>
     <string name="sc_new">New chat</string>
-    <string name="sc_balance">Balance</string>
-    <string name="sc_account">Account</string>
+    <string name="sc_tokens">Tokens</string>
+    <string name="sc_providers">Providers</string>
     <string name="channel_name">Replies</string>
-    <string name="channel_desc">When opencode finishes a reply while the app is in the background</string>
+    <string name="channel_desc">When a reply finishes while the app is in the background</string>
     <string name="speak_prompt">Ask opencode</string>
 </resources>

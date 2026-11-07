@@ -62,6 +62,14 @@ input:not([type=checkbox]):not([type=range]), textarea {
   padding: 12px 14px; min-height: 48px; width: 100%; outline: none;
 }
 input:focus { border-color: var(--accent); }
+select { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; min-height: 42px; padding: 0 10px; flex: none; }
+.budget-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.budget-form .inline-form { margin-top: 0; flex-wrap: wrap; }
+.budget-form .inline-form input { flex: 1 1 100%; }
+.budget-form .inline-form select { flex: 1; }
+.seg.small { width: max-content; }
+.seg.small button { min-height: 32px; padding: 0 14px; font-size: 0.85em; }
+.greeting .btn { margin-top: 6px; }
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 0.9em; color: var(--fg2); }
 .error { color: var(--red); min-height: 1.2em; margin: 0; font-size: 0.9em; }
 

@@ -5,34 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#FAF9F5" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="description" content="opencode on your Pixel: chat with your coding agent, manage provider logins and see your balance per model." />
-    <title>opencode·pixel</title>
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;600&display=swap" />
-    <link rel="stylesheet" href="/style.css" />
-    <script type="module" src="/app.js"></script>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https: http:; base-uri 'none'; form-action 'none'" />
+    <title>opencode</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="app.js"></script>
   </head>
   <body>
-    <!-- ── login ───────────────────────────────────────────────── -->
-    <div id="login" class="login" hidden>
-      <form id="login-form" class="login-card" autocomplete="on">
-        <div class="login-mark" id="login-mark"></div>
-        <h1 class="serif">Welcome back</h1>
-        <p class="muted" id="login-host"></p>
-        <label class="field"><span>Username</span><input name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required /></label>
-        <label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" required /></label>
-        <p class="error" id="login-error" role="alert"></p>
-        <button class="btn primary block" type="submit">Continue</button>
-      </form>
-    </div>
-
-    <!-- ── chat (the main screen) ──────────────────────────────── -->
-    <div id="app" hidden>
+    <div id="app">
       <header class="topbar">
         <button class="icon-btn" id="menu-btn" aria-label="Open menu"></button>
         <button class="title-btn" id="title-btn" aria-label="Chat options"><span id="chat-title">New chat</span><span id="title-chev"></span></button>
@@ -45,19 +24,16 @@
       </main>
 
       <div class="dock">
-        <div id="retry" class="banner bad" hidden></div>
-        <div id="perms"></div>
         <form class="composer" id="composer">
           <div id="attachments" class="attachments"></div>
           <textarea id="prompt" rows="1" placeholder="How can I help you today?" enterkeyhint="send" autocomplete="off"></textarea>
           <div class="composer-row">
-            <button type="button" class="round-btn" id="attach-btn" aria-label="Add photos or files"></button>
-            <button type="button" class="pill" id="agent-chip" aria-label="Agent"></button>
+            <button type="button" class="round-btn" id="attach-btn" aria-label="Add photos"></button>
             <span class="grow"></span>
             <button type="button" class="model-btn" id="model-chip" aria-label="Choose model"></button>
             <button type="submit" class="send-btn" id="send-btn" aria-label="Send"></button>
           </div>
-          <input type="file" id="file-input" accept="image/*,application/pdf" multiple hidden />
+          <input type="file" id="file-input" accept="image/*" multiple hidden />
           <input type="file" id="camera-input" accept="image/*" capture="environment" hidden />
         </form>
       </div>
@@ -69,10 +45,10 @@
       <div class="drawer-head"><span id="drawer-mark"></span><span class="wordmark serif">opencode</span></div>
       <nav class="drawer-nav">
         <button class="nav-item accent" id="nav-new"><span class="nav-ico" data-i="plus"></span>New chat</button>
-        <button class="nav-item" data-page="balance"><span class="nav-ico" data-i="wallet"></span>Balance<small class="nav-meta" id="nav-balance"></small></button>
-        <button class="nav-item" data-page="account"><span class="nav-ico" data-i="user"></span>Account</button>
+        <button class="nav-item" data-page="tokens"><span class="nav-ico" data-i="gauge"></span>Tokens<small class="nav-meta" id="nav-tokens"></small></button>
+        <button class="nav-item" data-page="providers"><span class="nav-ico" data-i="key"></span>Providers<small class="nav-meta" id="nav-providers"></small></button>
       </nav>
-      <div class="drawer-search"><span data-i="search"></span><input type="search" id="session-filter" placeholder="Search chats" aria-label="Search chats" /></div>
+      <div class="drawer-search"><span data-i="search"></span><input type="search" id="chat-filter" placeholder="Search chats" aria-label="Search chats" /></div>
       <div class="drawer-label">Recents</div>
       <ul class="recents" id="recents"></ul>
       <button class="profile" data-page="settings">
@@ -83,13 +59,13 @@
     </aside>
 
     <!-- ── full-screen pages ───────────────────────────────────── -->
-    <section class="page" id="page-balance" hidden>
-      <header class="pagebar"><button class="icon-btn back" aria-label="Back"></button><h1>Balance</h1><button class="icon-btn" id="bal-refresh" aria-label="Refresh"></button></header>
-      <div class="page-body" id="balance"></div>
+    <section class="page" id="page-tokens" hidden>
+      <header class="pagebar"><button class="icon-btn back" aria-label="Back"></button><h1>Tokens</h1><button class="icon-btn" id="tok-refresh" aria-label="Refresh balances"></button></header>
+      <div class="page-body" id="tokens"></div>
     </section>
-    <section class="page" id="page-account" hidden>
-      <header class="pagebar"><button class="icon-btn back" aria-label="Back"></button><h1>Account</h1><span class="icon-btn"></span></header>
-      <div class="page-body" id="account"></div>
+    <section class="page" id="page-providers" hidden>
+      <header class="pagebar"><button class="icon-btn back" aria-label="Back"></button><h1>Providers</h1><span class="icon-btn"></span></header>
+      <div class="page-body" id="providers"></div>
     </section>
     <section class="page" id="page-settings" hidden>
       <header class="pagebar"><button class="icon-btn back" aria-label="Back"></button><h1>Settings</h1><span class="icon-btn"></span></header>
@@ -105,6 +81,7 @@
       </div>
     </div>
 
+    <input type="file" id="import-input" accept="application/json,.json" hidden />
     <div id="toasts" aria-live="polite"></div>
   </body>
 </html>
